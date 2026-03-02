@@ -1,6 +1,7 @@
 import { SessionManager } from "@mariozechner/pi-coding-agent";
 import type { ServerEvent } from "@middleman/protocol";
 import { isConversationEntryEvent } from "./conversation-validators.js";
+import { persistSessionManagerCustomEntryIfNeeded } from "./session-manager-custom-entry-persistence.js";
 import {
   extractMessageErrorMessage,
   extractMessageImageAttachments,
@@ -244,7 +245,9 @@ export class ConversationProjector {
         return;
       }
 
-      SessionManager.open(descriptor.sessionFile).appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
+      const sessionManager = SessionManager.open(descriptor.sessionFile);
+      sessionManager.appendCustomEntry(CONVERSATION_ENTRY_TYPE, event);
+      persistSessionManagerCustomEntryIfNeeded(sessionManager);
     } catch (error) {
       this.deps.logDebug("history:save:error", {
         message: error instanceof Error ? error.message : String(error)

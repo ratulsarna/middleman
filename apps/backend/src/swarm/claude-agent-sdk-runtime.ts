@@ -19,6 +19,7 @@ import {
   normalizeRuntimeError,
   normalizeRuntimeUserMessage
 } from "./runtime-utils.js";
+import { persistSessionManagerCustomEntryIfNeeded } from "./session-manager-custom-entry-persistence.js";
 import type {
   RuntimeErrorEvent,
   RuntimeUserMessage,
@@ -285,6 +286,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
 
   appendCustomEntry(customType: string, data?: unknown): void {
     this.sessionManager.appendCustomEntry(customType, data);
+    persistSessionManagerCustomEntryIfNeeded(this.sessionManager);
   }
 
   private isBusy(): boolean {

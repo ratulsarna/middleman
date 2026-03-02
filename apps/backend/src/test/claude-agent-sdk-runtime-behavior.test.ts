@@ -223,6 +223,43 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
     await runtimeAfterRestart.terminate({ abort: true });
   });
 
+  it("persists custom session entries even before assistant messages exist", async () => {
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+    const descriptor = createDescriptor(rootDir);
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      systemPrompt: "You are a worker",
+      tools: [],
+      authFile
+    });
+
+    runtime.appendCustomEntry("swarm_conversation_entry", {
+      type: "conversation_message",
+      agentId: descriptor.agentId,
+      role: "user",
+      text: "hello",
+      timestamp: new Date().toISOString(),
+      source: "user_input"
+    });
+
+    const sessionFileText = await readFile(descriptor.sessionFile, "utf8");
+    expect(sessionFileText).toContain('"customType":"swarm_conversation_entry"');
+
+    await runtime.terminate({ abort: true });
+  });
+
   it("passes Claude OAuth credentials via Claude Code env vars", async () => {
     sdkMockState.streams.push([
       {
