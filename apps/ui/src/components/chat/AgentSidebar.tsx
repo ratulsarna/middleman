@@ -1,6 +1,6 @@
 import { ChevronDown, ChevronRight, CircleDashed, Settings, SquarePen, UserStar, X } from 'lucide-react'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { buildManagerTreeRows } from '@/lib/agent-hierarchy'
 import { inferModelPreset } from '@/lib/model-preset'
@@ -257,10 +257,53 @@ export function AgentSidebar({
   onOpenSettings,
 }: AgentSidebarProps) {
   const { managerRows, orphanWorkers } = buildManagerTreeRows(agents)
-  const [expandedManagerIds, setExpandedManagerIds] = useState<Set<string>>(() => new Set())
+  const [collapsedManagerIds, setCollapsedManagerIds] = useState<Set<string>>(() => new Set())
+  const previousWorkerCountsByManagerRef = useRef<Map<string, number>>(new Map())
+
+  useEffect(() => {
+    const previousWorkerCountsByManager = previousWorkerCountsByManagerRef.current
+    const managerIdsWithIncreasedWorkers: string[] = []
+    const liveManagerIds = new Set<string>()
+
+    for (const { manager, workers } of managerRows) {
+      const managerId = manager.agentId
+      const workerCount = workers.length
+      const previousWorkerCount = previousWorkerCountsByManager.get(managerId) ?? 0
+
+      liveManagerIds.add(managerId)
+      if (workerCount > previousWorkerCount) {
+        managerIdsWithIncreasedWorkers.push(managerId)
+      }
+
+      previousWorkerCountsByManager.set(managerId, workerCount)
+    }
+
+    for (const managerId of Array.from(previousWorkerCountsByManager.keys())) {
+      if (!liveManagerIds.has(managerId)) {
+        previousWorkerCountsByManager.delete(managerId)
+      }
+    }
+
+    if (managerIdsWithIncreasedWorkers.length === 0) {
+      return
+    }
+
+    setCollapsedManagerIds((previous) => {
+      const next = new Set(previous)
+      let changed = false
+
+      for (const managerId of managerIdsWithIncreasedWorkers) {
+        if (next.delete(managerId)) {
+          changed = true
+        }
+      }
+
+      return changed ? next : previous
+    })
+  }, [managerRows])
 
   const toggleManagerCollapsed = (managerId: string) => {
-    setExpandedManagerIds((previous) => {
+    setCollapsedManagerIds((previous) => {
       const next = new Set(previous)
 
       if (next.has(managerId)) {
@@ -345,7 +388,7 @@ export function AgentSidebar({
             {managerRows.map(({ manager, workers }) => {
               const managerLiveStatus = getAgentLiveStatus(manager, statuses)
               const managerIsSelected = !isSettingsActive && selectedAgentId === manager.agentId
-              const managerIsCollapsed = !expandedManagerIds.has(manager.agentId)
+              const managerIsCollapsed = collapsedManagerIds.has(manager.agentId)
               const streamingWorkerCount = managerIsCollapsed
                 ? workers.filter((w) => getAgentLiveStatus(w, statuses).status === 'streaming').length
                 : 0

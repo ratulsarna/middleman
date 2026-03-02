@@ -87,7 +87,9 @@ function renderSidebar({
   isSettingsActive?: boolean
   statuses?: Record<string, { status: AgentStatus; pendingCount: number }>
 }) {
-  root = createRoot(container)
+  if (!root) {
+    root = createRoot(container)
+  }
 
   flushSync(() => {
     root?.render(
@@ -118,6 +120,36 @@ describe('AgentSidebar', () => {
 
     click(getByRole(container, 'button', { name: 'Expand manager manager-alpha' }))
     expect(queryByText(container, 'worker-alpha')).toBeTruthy()
+  })
+
+  it('auto-expands a collapsed manager when worker count increases', () => {
+    renderSidebar({ agents: [manager('manager-alpha')] })
+
+    click(getByRole(container, 'button', { name: 'Collapse manager manager-alpha' }))
+    expect(getByRole(container, 'button', { name: 'Expand manager manager-alpha' })).toBeTruthy()
+    expect(queryByText(container, 'worker-alpha')).toBeNull()
+
+    renderSidebar({
+      agents: [manager('manager-alpha'), worker('worker-alpha', 'manager-alpha')],
+    })
+
+    expect(queryByText(container, 'worker-alpha')).toBeTruthy()
+    expect(getByRole(container, 'button', { name: 'Collapse manager manager-alpha' })).toBeTruthy()
+
+    click(getByRole(container, 'button', { name: 'Collapse manager manager-alpha' }))
+    expect(getByRole(container, 'button', { name: 'Expand manager manager-alpha' })).toBeTruthy()
+
+    renderSidebar({
+      agents: [
+        manager('manager-alpha'),
+        worker('worker-alpha', 'manager-alpha'),
+        worker('worker-beta', 'manager-alpha'),
+      ],
+    })
+
+    expect(queryByText(container, 'worker-alpha')).toBeTruthy()
+    expect(queryByText(container, 'worker-beta')).toBeTruthy()
+    expect(getByRole(container, 'button', { name: 'Collapse manager manager-alpha' })).toBeTruthy()
   })
 
   it('shows runtime icons and compact model labels from model presets', () => {

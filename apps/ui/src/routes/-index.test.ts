@@ -62,7 +62,7 @@ function click(element: HTMLElement): void {
   })
 }
 
-function changeValue(element: HTMLInputElement, value: string): void {
+function changeValue(element: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   flushSync(() => {
     fireEvent.change(element, {
       target: { value },
@@ -318,5 +318,64 @@ describe('IndexPage create manager model selection', () => {
     expect(queryByText(container, /owned-call/)).toBeNull()
     expect(queryByText(container, 'foreign worker chatter')).toBeNull()
     expect(queryByText(container, /foreign-call/)).toBeNull()
+  })
+
+  it('shows workers in sidebar and sends messages to the selected worker thread', async () => {
+    const socket = await renderPage()
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        buildManager('manager', '/tmp/manager'),
+        buildWorker('release-worker', 'manager', '/tmp/manager'),
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(queryByText(container, 'release-worker')).not.toBeNull()
+
+    const workerRow = queryByText(container, 'release-worker')
+    expect(workerRow).not.toBeNull()
+    click(workerRow!.closest('button') as HTMLButtonElement)
+
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '{}')).toEqual({
+      type: 'subscribe',
+      agentId: 'release-worker',
+    })
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'release-worker',
+    })
+
+    emitServerEvent(socket, {
+      type: 'conversation_history',
+      agentId: 'release-worker',
+      messages: [
+        {
+          type: 'conversation_message',
+          agentId: 'release-worker',
+          role: 'assistant',
+          text: 'worker thread online',
+          timestamp: new Date().toISOString(),
+          source: 'system',
+        },
+      ],
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+    expect(queryByText(container, 'worker thread online')).not.toBeNull()
+
+    const input = getByRole(container, 'textbox') as HTMLTextAreaElement
+    changeValue(input, 'ship it')
+    click(getByRole(container, 'button', { name: 'Send message' }))
+
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '{}')).toEqual({
+      type: 'user_message',
+      text: 'ship it',
+      agentId: 'release-worker',
+      delivery: 'auto',
+    })
   })
 })
