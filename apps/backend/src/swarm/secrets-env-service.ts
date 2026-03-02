@@ -23,6 +23,10 @@ const SETTINGS_AUTH_PROVIDER_DEFINITIONS: Array<{
   {
     provider: "openai-codex",
     storageProvider: "openai-codex"
+  },
+  {
+    provider: "claude-agent-sdk",
+    storageProvider: "claude-agent-sdk"
   }
 ];
 
@@ -131,12 +135,13 @@ export class SecretsEnvService {
     return SETTINGS_AUTH_PROVIDER_DEFINITIONS.map((definition) => {
       const credential = authStorage.get(definition.storageProvider);
       const resolvedToken = extractAuthCredentialToken(credential);
+      const configured = isSettingsAuthProviderConfigured(definition.provider, credential, resolvedToken);
 
       return {
         provider: definition.provider,
-        configured: typeof resolvedToken === "string" && resolvedToken.length > 0,
+        configured,
         authType: resolveAuthCredentialType(credential),
-        maskedValue: resolvedToken ? maskSettingsAuthValue(resolvedToken) : undefined
+        maskedValue: configured && resolvedToken ? maskSettingsAuthValue(resolvedToken) : undefined
       } satisfies SettingsAuthProvider;
     });
   }
@@ -153,6 +158,10 @@ export class SecretsEnvService {
       const resolvedProvider = resolveSettingsAuthProvider(rawProvider);
       if (!resolvedProvider) {
         throw new Error(`Invalid auth provider: ${rawProvider}`);
+      }
+
+      if (resolvedProvider.provider === "claude-agent-sdk") {
+        throw new Error("claude-agent-sdk auth must be configured via OAuth login flow.");
       }
 
       const normalizedValue = typeof rawValue === "string" ? rawValue.trim() : "";
@@ -332,6 +341,22 @@ function extractAuthCredentialToken(credential: AuthCredential | undefined): str
   }
 
   return undefined;
+}
+
+function isSettingsAuthProviderConfigured(
+  provider: SettingsAuthProviderName,
+  credential: AuthCredential | undefined,
+  resolvedToken: string | undefined
+): boolean {
+  if (typeof resolvedToken !== "string" || resolvedToken.length === 0) {
+    return false;
+  }
+
+  if (provider === "claude-agent-sdk") {
+    return credential?.type === "oauth";
+  }
+
+  return true;
 }
 
 function normalizeAuthToken(value: unknown): string | undefined {

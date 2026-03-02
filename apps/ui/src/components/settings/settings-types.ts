@@ -12,7 +12,7 @@ export interface SettingsEnvVariable {
   maskedValue?: string
 }
 
-export type SettingsAuthProviderId = 'anthropic' | 'openai-codex'
+export type SettingsAuthProviderId = 'anthropic' | 'openai-codex' | 'claude-agent-sdk'
 
 export interface SettingsAuthProvider {
   provider: SettingsAuthProviderId

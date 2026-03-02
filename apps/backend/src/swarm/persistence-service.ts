@@ -17,6 +17,7 @@ const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
 ## Open Follow-ups
 - (none yet)
 `;
+const CLAUDE_RUNTIME_STATE_FILE_SUFFIX = ".claude-runtime-state.json";
 
 interface PersistenceServiceDependencies {
   config: SwarmConfig;
@@ -85,14 +86,8 @@ export class PersistenceService {
   }
 
   async deleteManagerSessionFile(sessionFile: string): Promise<void> {
-    try {
-      await unlink(sessionFile);
-    } catch (error) {
-      if (isEnoentError(error)) {
-        return;
-      }
-      throw error;
-    }
+    await this.deleteFileIfExists(sessionFile);
+    await this.deleteFileIfExists(`${sessionFile}${CLAUDE_RUNTIME_STATE_FILE_SUFFIX}`);
   }
 
   async loadStore(): Promise<AgentsStoreFile> {
@@ -140,6 +135,17 @@ export class PersistenceService {
 
   private getAgentMemoryPath(agentId: string): string {
     return getAgentMemoryPathForDataDir(this.deps.config.paths.dataDir, agentId);
+  }
+
+  private async deleteFileIfExists(path: string): Promise<void> {
+    try {
+      await unlink(path);
+    } catch (error) {
+      if (isEnoentError(error)) {
+        return;
+      }
+      throw error;
+    }
   }
 }
 

@@ -95,6 +95,7 @@ function AuthProviderRow({
   onResetOAuth: () => void
 }) {
   const metadata = SETTINGS_AUTH_PROVIDER_META[provider]
+  const isOAuthOnly = metadata.oauthRequired === true
   const busy = isSaving || isDeleting
   const oauthInProgress =
     oauthFlow.status === 'starting' ||
@@ -130,56 +131,62 @@ function AuthProviderRow({
         </a>
       </div>
 
-      <div className="mt-3 flex items-center gap-2">
-        <div className="relative flex-1">
-          <Input
-            type={isRevealed ? 'text' : 'password'}
-            placeholder={authStatus.configured ? (authStatus.maskedValue ?? metadata.placeholder) : metadata.placeholder}
-            value={draftValue}
-            onChange={(event) => onDraftChange(event.target.value)}
-            className="pr-9 font-mono text-xs"
-            autoComplete="off"
-            spellCheck={false}
-            disabled={busy}
-          />
+      {isOAuthOnly ? (
+        <p className="mt-3 text-[11px] text-muted-foreground">
+          Direct key entry is disabled for this provider. Use OAuth login below.
+        </p>
+      ) : (
+        <div className="mt-3 flex items-center gap-2">
+          <div className="relative flex-1">
+            <Input
+              type={isRevealed ? 'text' : 'password'}
+              placeholder={authStatus.configured ? (authStatus.maskedValue ?? metadata.placeholder) : metadata.placeholder}
+              value={draftValue}
+              onChange={(event) => onDraftChange(event.target.value)}
+              className="pr-9 font-mono text-xs"
+              autoComplete="off"
+              spellCheck={false}
+              disabled={busy}
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              onClick={onToggleReveal}
+              disabled={busy}
+              className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-muted-foreground/70 hover:text-foreground"
+              title={isRevealed ? 'Hide value' : 'Show value'}
+            >
+              {isRevealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+            </Button>
+          </div>
+
           <Button
             type="button"
-            variant="ghost"
-            size="icon"
-            onClick={onToggleReveal}
-            disabled={busy}
-            className="absolute right-1 top-1/2 size-7 -translate-y-1/2 text-muted-foreground/70 hover:text-foreground"
-            title={isRevealed ? 'Hide value' : 'Show value'}
-          >
-            {isRevealed ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
-          </Button>
-        </div>
-
-        <Button
-          type="button"
-          size="sm"
-          onClick={onSave}
-          disabled={!draftValue.trim() || busy}
-          className="gap-1.5"
-        >
-          {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-          {isSaving ? 'Saving' : 'Save'}
-        </Button>
-
-        {authStatus.configured ? (
-          <Button
-            type="button"
-            variant="ghost"
             size="sm"
-            onClick={onDelete}
-            disabled={busy}
-            className="gap-1.5 text-muted-foreground hover:text-destructive"
+            onClick={onSave}
+            disabled={!draftValue.trim() || busy}
+            className="gap-1.5"
           >
-            {isDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-            {isDeleting ? 'Removing' : 'Remove'}
+            {isSaving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+            {isSaving ? 'Saving' : 'Save'}
           </Button>
-        ) : null}
-      </div>
+
+          {authStatus.configured ? (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={onDelete}
+              disabled={busy}
+              className="gap-1.5 text-muted-foreground hover:text-destructive"
+            >
+              {isDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+              {isDeleting ? 'Removing' : 'Remove'}
+            </Button>
+          ) : null}
+        </div>
+      )}
 
       <div className="mt-4">
         <Separator className="mb-3" />
@@ -215,6 +222,20 @@ function AuthProviderRow({
                 {oauthInProgress ? <Loader2 className="size-3.5 animate-spin" /> : <Plug className="size-3.5" />}
                 {oauthInProgress ? 'Authorizing...' : 'Login with OAuth'}
               </Button>
+
+              {isOAuthOnly && authStatus.configured ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  onClick={onDelete}
+                  disabled={busy || oauthInProgress || oauthFlow.isSubmittingCode}
+                  className="gap-1.5 text-muted-foreground hover:text-destructive"
+                >
+                  {isDeleting ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                  {isDeleting ? 'Removing' : 'Remove'}
+                </Button>
+              ) : null}
             </div>
           </div>
 
@@ -354,6 +375,11 @@ export function SettingsAuth({ wsUrl }: SettingsAuthProps) {
   }, [abortAllOAuthLoginFlows])
 
   const handleSaveAuth = async (provider: SettingsAuthProviderId) => {
+    if (SETTINGS_AUTH_PROVIDER_META[provider].oauthRequired) {
+      setAuthError(`${SETTINGS_AUTH_PROVIDER_META[provider].label} must be connected via OAuth.`)
+      return
+    }
+
     const value = authDraftByProvider[provider]?.trim() ?? ''
     if (!value) {
       setAuthError(`Enter a value for ${SETTINGS_AUTH_PROVIDER_META[provider].label} before saving.`)

@@ -21,7 +21,7 @@ const SETTINGS_AUTH_LOGIN_ENDPOINT_PATH = "/api/settings/auth/login";
 const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
 const SETTINGS_AUTH_METHODS = "GET, PUT, DELETE, POST, OPTIONS";
 
-type OAuthLoginProviderId = "anthropic" | "openai-codex";
+type OAuthLoginProviderId = "anthropic" | "openai-codex" | "claude-agent-sdk";
 
 type SettingsAuthLoginEventName = "auth_url" | "prompt" | "progress" | "complete" | "error";
 
@@ -47,7 +47,8 @@ interface SettingsAuthLoginFlow {
 
 const SETTINGS_AUTH_LOGIN_PROVIDERS: Record<OAuthLoginProviderId, OAuthProviderInterface> = {
   anthropic: anthropicOAuthProvider,
-  "openai-codex": openaiCodexOAuthProvider
+  "openai-codex": openaiCodexOAuthProvider,
+  "claude-agent-sdk": anthropicOAuthProvider
 };
 
 export interface SettingsRouteBundle {
@@ -512,7 +513,11 @@ function parseSettingsAuthLoginRespondBody(value: unknown): { value: string } {
 
 function resolveSettingsAuthLoginProviderId(rawProvider: string): OAuthLoginProviderId | undefined {
   const normalized = rawProvider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "openai-codex") {
+  if (
+    normalized === "anthropic" ||
+    normalized === "openai-codex" ||
+    normalized === "claude-agent-sdk"
+  ) {
     return normalized;
   }
 

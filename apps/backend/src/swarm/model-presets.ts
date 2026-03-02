@@ -20,6 +20,11 @@ const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> =
     provider: "openai-codex-app-server",
     modelId: "default",
     thinkingLevel: "xhigh"
+  },
+  "claude-agent-sdk": {
+    provider: "claude-agent-sdk",
+    modelId: "claude-opus-4-6",
+    thinkingLevel: "xhigh"
   }
 };
 
@@ -72,17 +77,42 @@ export function inferSwarmModelPresetFromDescriptor(
     return "pi-opus";
   }
 
+  // Legacy Anthropic model id alias.
+  if (provider === "anthropic" && modelId === "claude-opus-4.6") {
+    return "pi-opus";
+  }
+
   if (provider === "openai-codex-app-server" && modelId === "default") {
     return "codex-app";
+  }
+
+  // Legacy codex-app model id aliases.
+  if (
+    provider === "openai-codex-app-server" &&
+    (modelId === "codex-app" || modelId === "codex-app-server")
+  ) {
+    return "codex-app";
+  }
+
+  if (provider === "claude-agent-sdk" && modelId === "claude-opus-4-6") {
+    return "claude-agent-sdk";
   }
 
   return undefined;
 }
 
 export function normalizeSwarmModelDescriptor(
-  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined,
-  fallbackPreset: SwarmModelPreset = DEFAULT_SWARM_MODEL_PRESET
+  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
 ): AgentModelDescriptor {
-  const preset = inferSwarmModelPresetFromDescriptor(descriptor) ?? fallbackPreset;
+  const preset = inferSwarmModelPresetFromDescriptor(descriptor);
+  if (!preset) {
+    const provider = descriptor?.provider?.trim() || "<missing>";
+    const modelId = descriptor?.modelId?.trim() || "<missing>";
+    throw new Error(
+      `Unsupported model descriptor ${provider}/${modelId}. ` +
+        `Use one of ${describeSwarmModelPresets()} or recreate the agent.`
+    );
+  }
+
   return resolveModelDescriptorFromPreset(preset);
 }

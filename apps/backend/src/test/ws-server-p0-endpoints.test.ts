@@ -469,6 +469,160 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
     }
   })
 
+  it('supports claude-agent-sdk OAuth login SSE flow with the anthropic provider backend', async () => {
+    oauthMockState.anthropicLogin.mockImplementation(async (callbacks: any) => {
+      callbacks.onProgress?.('Preparing OAuth login')
+      callbacks.onAuth?.({
+        url: 'https://auth.example.test/claude-agent-sdk',
+        instructions: 'Open the URL in your browser.',
+      })
+
+      const code = await callbacks.onPrompt?.({
+        message: 'Paste the one-time code',
+        placeholder: 'code-456',
+      })
+
+      callbacks.onProgress?.(`Received code: ${code}`)
+
+      return {
+        accessToken: 'oauth-access-token-claude-agent-sdk',
+        refreshToken: 'oauth-refresh-token-claude-agent-sdk',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/auth/login/claude-agent-sdk`,
+        {
+          method: 'POST',
+        },
+      )
+
+      expect(streamResponse.status).toBe(200)
+      expect(streamResponse.headers.get('content-type')).toContain('text/event-stream')
+
+      let responded = false
+      const events = await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'prompt' || responded) {
+          return
+        }
+
+        responded = true
+        const respondResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/claude-agent-sdk/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'claude-agent-sdk-code' }),
+          },
+        )
+
+        const payload = await parseJsonResponse(respondResponse)
+        expect(payload.status).toBe(200)
+        expect(payload.json.ok).toBe(true)
+      })
+
+      const eventNames = events.map((event) => event.event)
+      expect(eventNames).toEqual(expect.arrayContaining(['progress', 'auth_url', 'prompt', 'complete']))
+      expect(oauthMockState.anthropicLogin).toHaveBeenCalledTimes(1)
+
+      const storedAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
+      expect(storedAuth['claude-agent-sdk']).toMatchObject({
+        type: 'oauth',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('supports openai-codex OAuth login SSE flow', async () => {
+    oauthMockState.openaiLogin.mockImplementation(async (callbacks: any) => {
+      callbacks.onProgress?.('Preparing OpenAI OAuth login')
+      callbacks.onAuth?.({
+        url: 'https://auth.example.test/openai-codex',
+        instructions: 'Open the URL in your browser.',
+      })
+
+      const code = await callbacks.onPrompt?.({
+        message: 'Paste the OpenAI code',
+        placeholder: 'openai-code-123',
+      })
+
+      callbacks.onProgress?.(`Received code: ${code}`)
+
+      return {
+        accessToken: 'oauth-access-token-openai-codex',
+        refreshToken: 'oauth-refresh-token-openai-codex',
+      }
+    })
+
+    const config = await makeTempConfig({ managerId: 'manager' })
+    const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager as unknown as never,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: false,
+    })
+
+    await server.start()
+
+    try {
+      const streamResponse = await fetch(
+        `http://${config.host}:${config.port}/api/settings/auth/login/openai-codex`,
+        {
+          method: 'POST',
+        },
+      )
+
+      expect(streamResponse.status).toBe(200)
+      expect(streamResponse.headers.get('content-type')).toContain('text/event-stream')
+
+      let responded = false
+      const events = await readSseEvents(streamResponse, async (event) => {
+        if (event.event !== 'prompt' || responded) {
+          return
+        }
+
+        responded = true
+        const respondResponse = await fetch(
+          `http://${config.host}:${config.port}/api/settings/auth/login/openai-codex/respond`,
+          {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ value: 'openai-codex-code' }),
+          },
+        )
+
+        const payload = await parseJsonResponse(respondResponse)
+        expect(payload.status).toBe(200)
+        expect(payload.json.ok).toBe(true)
+      })
+
+      const eventNames = events.map((event) => event.event)
+      expect(eventNames).toEqual(expect.arrayContaining(['progress', 'auth_url', 'prompt', 'complete']))
+      expect(oauthMockState.openaiLogin).toHaveBeenCalledTimes(1)
+
+      const storedAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
+      expect(storedAuth['openai-codex']).toMatchObject({
+        type: 'oauth',
+      })
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('validates OAuth login provider and path segments', async () => {
     const config = await makeTempConfig({ managerId: 'manager' })
     const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])

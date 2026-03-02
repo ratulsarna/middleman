@@ -717,6 +717,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
     const runtime = await this.getOrCreateRuntimeForDescriptor(target);
+    const requestedDelivery = this.normalizeRequestedDeliveryForTarget(target, delivery);
 
     const origin = options?.origin ?? "internal";
     const attachments = normalizeConversationAttachments(options?.attachments);
@@ -728,13 +729,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
       origin
     );
-    const receipt = await runtime.sendMessage(modelMessage, delivery);
+    const receipt = await runtime.sendMessage(modelMessage, requestedDelivery);
 
     this.logDebug("agent:send_message", {
       fromAgentId,
       targetAgentId,
       origin,
-      requestedDelivery: delivery,
+      requestedDelivery,
       acceptedMode: receipt.acceptedMode,
       textPreview: previewForLog(message),
       attachmentCount: attachments.length,
@@ -751,7 +752,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
           fromAgentId,
           toAgentId: targetAgentId,
           text: message,
-          requestedDelivery: delivery,
+          requestedDelivery,
           acceptedMode: receipt.acceptedMode,
           attachmentCount: attachments.length > 0 ? attachments.length : undefined
         });
@@ -759,6 +760,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return receipt;
+  }
+
+  private normalizeRequestedDeliveryForTarget(
+    target: AgentDescriptor,
+    delivery: RequestedDeliveryMode
+  ): RequestedDeliveryMode {
+    const provider = target.model.provider.trim().toLowerCase();
+    if (provider === "claude-agent-sdk" && delivery === "steer") {
+      return "followUp";
+    }
+
+    return delivery;
   }
 
   private async prepareModelInboundMessage(
@@ -1115,6 +1128,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return;
     }
 
+    const requestedDelivery = this.normalizeRequestedDeliveryForTarget(target, "steer");
+
     let managerRuntime: SwarmAgentRuntime;
     try {
       managerRuntime = await this.getOrCreateRuntimeForDescriptor(target);
@@ -1123,7 +1138,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         managerContextId,
         targetAgentId: managerContextId,
         targetRole: target.role,
-        requestedDelivery: "steer",
+        requestedDelivery,
         sourceContext,
         textPreview: previewForLog(trimmed),
         attachmentCount: attachments.length,
@@ -1135,7 +1150,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
     const managerVisibleMessage = formatInboundUserMessageForManager(trimmed, sourceContext);
 
-    // User messages to managers should always steer in-flight work.
+    // Prefer steer for manager-bound user messages; runtimes that don't support it are downgraded.
     const runtimeMessage = await this.prepareModelInboundMessage(
       managerContextId,
       {
@@ -1149,7 +1164,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerContextId,
       targetAgentId: managerContextId,
       targetRole: target.role,
-      requestedDelivery: "steer",
+      requestedDelivery,
       sourceContext,
       textPreview: previewForLog(trimmed),
       attachmentCount: attachments.length,
@@ -1158,12 +1173,12 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     try {
-      const receipt = await managerRuntime.sendMessage(runtimeMessage, "steer");
+      const receipt = await managerRuntime.sendMessage(runtimeMessage, requestedDelivery);
       this.logDebug("manager:user_message_dispatch_complete", {
         managerContextId,
         targetAgentId: managerContextId,
         targetRole: target.role,
-        requestedDelivery: "steer",
+        requestedDelivery,
         acceptedMode: receipt.acceptedMode,
         sourceContext,
         attachmentCount: attachments.length
@@ -1173,7 +1188,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         managerContextId,
         targetAgentId: managerContextId,
         targetRole: target.role,
-        requestedDelivery: "steer",
+        requestedDelivery,
         sourceContext,
         textPreview: previewForLog(trimmed),
         attachmentCount: attachments.length,
@@ -1462,6 +1477,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       return existingRuntime;
     }
 
+    const normalizedModel = this.normalizePersistedModelDescriptor(descriptor.model);
+    if (
+      descriptor.model.provider !== normalizedModel.provider ||
+      descriptor.model.modelId !== normalizedModel.modelId ||
+      descriptor.model.thinkingLevel !== normalizedModel.thinkingLevel
+    ) {
+      descriptor.model = normalizedModel;
+      descriptor.updatedAt = this.now();
+      this.descriptors.set(descriptor.agentId, descriptor);
+    }
+
     const runtime = await this.createRuntimeForDescriptor(descriptor, this.resolveSystemPromptForDescriptor(descriptor));
 
     const latestDescriptor = this.descriptors.get(descriptor.agentId);
@@ -1514,7 +1540,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private normalizePersistedModelDescriptor(
     descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
   ): AgentModelDescriptor {
-    return normalizeSwarmModelDescriptor(descriptor, this.defaultModelPreset);
+    return normalizeSwarmModelDescriptor(descriptor);
   }
 
   private resolveSpawnModel(

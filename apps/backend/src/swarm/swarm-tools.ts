@@ -38,7 +38,8 @@ const deliveryModeSchema = Type.Union([
 const spawnModelPresetSchema = Type.Union([
   Type.Literal("pi-codex"),
   Type.Literal("pi-opus"),
-  Type.Literal("codex-app")
+  Type.Literal("codex-app"),
+  Type.Literal("claude-agent-sdk")
 ]);
 
 const messageChannelSchema = Type.Union([
@@ -83,7 +84,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "send_message_to_agent",
       label: "Send Message To Agent",
       description:
-        "Send a message to another agent by id. Returns immediately with a delivery receipt. If target is busy, queued delivery is accepted as steer.",
+        "Send a message to another agent by id. Returns immediately with a delivery receipt; accepted mode is runtime-dependent.",
       parameters: Type.Object({
         targetAgentId: Type.String({ description: "Agent id to receive the message." }),
         message: Type.String({ description: "Message text to deliver." }),
@@ -125,7 +126,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
       name: "spawn_agent",
       label: "Spawn Agent",
       description:
-        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, cwd, and initialMessage are optional. model accepts pi-codex|pi-opus|codex-app.",
+        "Create and start a new worker agent. agentId is required and normalized to lowercase kebab-case; if taken, a numeric suffix (-2, -3, …) is appended. archetypeId, systemPrompt, model, cwd, and initialMessage are optional. model accepts pi-codex|pi-opus|codex-app|claude-agent-sdk.",
       parameters: Type.Object({
         agentId: Type.String({
           description:

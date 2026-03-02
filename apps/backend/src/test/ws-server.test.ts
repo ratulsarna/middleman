@@ -789,6 +789,7 @@ describe('SwarmWebSocketServer', () => {
         expect.arrayContaining([
           expect.objectContaining({ provider: 'anthropic', configured: false }),
           expect.objectContaining({ provider: 'openai-codex', configured: false }),
+          expect.objectContaining({ provider: 'claude-agent-sdk', configured: false }),
         ]),
       )
 
@@ -810,11 +811,13 @@ describe('SwarmWebSocketServer', () => {
 
       const anthropic = updatedPayload.providers.find((entry) => entry.provider === 'anthropic')
       const openai = updatedPayload.providers.find((entry) => entry.provider === 'openai-codex')
+      const claudeAgentSdk = updatedPayload.providers.find((entry) => entry.provider === 'claude-agent-sdk')
 
       expect(anthropic?.configured).toBe(true)
       expect(anthropic?.maskedValue).toBe('********1234')
       expect(openai?.configured).toBe(true)
       expect(openai?.maskedValue).toBe('********5678')
+      expect(claudeAgentSdk?.configured).toBe(false)
 
       const storedAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<
         string,
@@ -829,6 +832,7 @@ describe('SwarmWebSocketServer', () => {
         type: 'api_key',
       })
       expect(storedAuth['openai-codex'].key ?? storedAuth['openai-codex'].access).toBe('sk-openai-test-5678')
+      expect(storedAuth['claude-agent-sdk']).toBeUndefined()
 
       const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth/openai-codex`, {
         method: 'DELETE',
@@ -842,6 +846,153 @@ describe('SwarmWebSocketServer', () => {
 
       const afterDeleteAuth = JSON.parse(await readFile(config.paths.authFile, 'utf8')) as Record<string, unknown>
       expect(afterDeleteAuth['openai-codex']).toBeUndefined()
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('rejects API-key writes for claude-agent-sdk auth provider', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const updateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`, {
+        method: 'PUT',
+        headers: {
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({
+          'claude-agent-sdk': 'sk-claude-agent-test-9012',
+        }),
+      })
+
+      expect(updateResponse.status).toBe(400)
+      const updatePayload = (await updateResponse.json()) as { error?: string }
+      expect(updatePayload.error).toContain('claude-agent-sdk auth must be configured via OAuth login flow.')
+
+      const providersResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`)
+      expect(providersResponse.status).toBe(200)
+      const providersPayload = (await providersResponse.json()) as {
+        providers: Array<{ provider: string; configured: boolean }>
+      }
+      expect(providersPayload.providers.find((entry) => entry.provider === 'claude-agent-sdk')?.configured).toBe(
+        false,
+      )
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('treats stale non-OAuth claude-agent-sdk credentials as unconfigured', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await writeFile(
+      config.paths.authFile,
+      JSON.stringify(
+        {
+          'claude-agent-sdk': {
+            type: 'api_key',
+            key: 'stale-claude-key',
+            access: 'stale-claude-key',
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const providersResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`)
+      expect(providersResponse.status).toBe(200)
+      const payload = (await providersResponse.json()) as {
+        providers: Array<{ provider: string; configured: boolean; authType?: string; maskedValue?: string }>
+      }
+
+      const claudeProvider = payload.providers.find((entry) => entry.provider === 'claude-agent-sdk')
+      expect(claudeProvider).toMatchObject({
+        provider: 'claude-agent-sdk',
+        configured: false,
+        authType: 'api_key',
+      })
+      expect(claudeProvider?.maskedValue).toBeUndefined()
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('reports claude-agent-sdk OAuth credentials as configured', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await writeFile(
+      config.paths.authFile,
+      JSON.stringify(
+        {
+          'claude-agent-sdk': {
+            type: 'oauth',
+            access: 'claude-oauth-access-token',
+            refresh: 'claude-oauth-refresh-token',
+            expires: String(Date.now() + 60_000),
+          },
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    try {
+      const providersResponse = await fetch(`http://${config.host}:${config.port}/api/settings/auth`)
+      expect(providersResponse.status).toBe(200)
+      const payload = (await providersResponse.json()) as {
+        providers: Array<{ provider: string; configured: boolean; authType?: string; maskedValue?: string }>
+      }
+
+      const claudeProvider = payload.providers.find((entry) => entry.provider === 'claude-agent-sdk')
+      expect(claudeProvider).toMatchObject({
+        provider: 'claude-agent-sdk',
+        configured: true,
+        authType: 'oauth',
+      })
+      expect(typeof claudeProvider?.maskedValue).toBe('string')
     } finally {
       await server.stop()
     }
@@ -1549,7 +1700,7 @@ describe('SwarmWebSocketServer', () => {
       (event) =>
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
-        event.message.includes('create_manager.model must be one of pi-codex|pi-opus|codex-app'),
+        event.message.includes('create_manager.model must be one of pi-codex|pi-opus|codex-app|claude-agent-sdk'),
     )
 
     expect(errorEvent.type).toBe('error')

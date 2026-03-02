@@ -20,7 +20,7 @@ import { resolveApiEndpoint } from '@/lib/api-endpoint'
 
 export const SETTINGS_AUTH_PROVIDER_META: Record<
   SettingsAuthProviderId,
-  { label: string; description: string; placeholder: string; helpUrl: string }
+  { label: string; description: string; placeholder: string; helpUrl: string; oauthRequired?: boolean }
 > = {
   anthropic: {
     label: 'Anthropic API key',
@@ -34,9 +34,20 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
     placeholder: 'sk-...',
     helpUrl: 'https://platform.openai.com/api-keys',
   },
+  'claude-agent-sdk': {
+    label: 'Claude Agent SDK credential',
+    description: 'Used by the claude-agent-sdk runtime (OAuth required).',
+    placeholder: 'Configured via OAuth login only',
+    helpUrl: 'https://platform.claude.com/docs/en/agent-sdk/overview',
+    oauthRequired: true,
+  },
 }
 
-export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = ['anthropic', 'openai-codex']
+export const SETTINGS_AUTH_PROVIDER_ORDER: SettingsAuthProviderId[] = [
+  'anthropic',
+  'openai-codex',
+  'claude-agent-sdk',
+]
 
 export const DEFAULT_SETTINGS_AUTH_OAUTH_FLOW_STATE: SettingsAuthOAuthFlowState = {
   status: 'idle',
@@ -56,6 +67,7 @@ export function createIdleSettingsAuthOAuthFlowState(): SettingsAuthOAuthFlowSta
 function normalizeSettingsAuthProviderId(value: unknown): SettingsAuthProviderId | undefined {
   if (value === 'anthropic') return 'anthropic'
   if (value === 'openai-codex') return 'openai-codex'
+  if (value === 'claude-agent-sdk') return 'claude-agent-sdk'
   return undefined
 }
 
