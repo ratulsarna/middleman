@@ -1,5 +1,19 @@
 # Middleman - Agent Notes
 
+## Critical Thinking
+- Fix root cause (not band-aid).
+- Unsure: read more code; if still stuck, ask w/ short options.
+- Conflicts: call out; pick safer path.
+- Unrecognized changes: assume other agent; keep going; focus your changes. If it causes issues, stop + ask user.
+
+## Coding Standards
+- The best code is the code you don't write. The second best is the code that's obviously correct
+- The best change is the change you didn't make
+- Do not add low impact tests
+- Only write concise and clear code comments
+- Code comments should explain why (not what) and how (if code is complex)
+- Implement features in the simplest possible way
+
 ## What This Project Is
 `middleman` is a local-first multi-agent orchestration platform. It runs:
 
