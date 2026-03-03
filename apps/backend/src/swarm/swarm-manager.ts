@@ -35,6 +35,10 @@ import {
   extractRole,
 } from "./message-utils.js";
 import {
+  DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS,
+  DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS
+} from "./model-preset-config.js";
+import {
   DEFAULT_SWARM_MODEL_PRESET,
   inferSwarmModelPresetFromDescriptor,
   normalizeSwarmModelDescriptor,
@@ -212,6 +216,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly config: SwarmConfig;
   private readonly now: () => string;
   private readonly defaultModelPreset: SwarmModelPreset;
+  private readonly modelPresetDefinitions: typeof DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS;
 
   private readonly descriptors = new Map<string, AgentDescriptor>();
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
@@ -227,11 +232,19 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   constructor(config: SwarmConfig, options?: { now?: () => string }) {
     super();
 
+    this.modelPresetDefinitions = config.modelPresetDefinitions ?? DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS;
     this.defaultModelPreset =
-      inferSwarmModelPresetFromDescriptor(config.defaultModel) ?? DEFAULT_SWARM_MODEL_PRESET;
+      inferSwarmModelPresetFromDescriptor(config.defaultModel, {
+        presetDefinitions: this.modelPresetDefinitions
+      }) ?? DEFAULT_SWARM_MODEL_PRESET;
     this.config = {
       ...config,
-      defaultModel: resolveModelDescriptorFromPreset(this.defaultModelPreset)
+      modelPresetDefinitions: this.modelPresetDefinitions,
+      providerThinkingLevelMappings:
+        config.providerThinkingLevelMappings ?? DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS,
+      defaultModel: resolveModelDescriptorFromPreset(this.defaultModelPreset, {
+        presetDefinitions: this.modelPresetDefinitions
+      })
     };
     this.now = options?.now ?? nowIso;
     this.persistenceService = new PersistenceService({
@@ -564,7 +577,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       updatedAt: createdAt,
       cwd,
       model: requestedModelPreset
-        ? resolveModelDescriptorFromPreset(requestedModelPreset)
+        ? resolveModelDescriptorFromPreset(requestedModelPreset, {
+            presetDefinitions: this.modelPresetDefinitions
+          })
         : this.resolveDefaultModelDescriptor(),
       sessionFile: join(this.config.paths.sessionsDir, `${managerId}.jsonl`)
     };
@@ -1536,13 +1551,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   }
 
   private resolveDefaultModelDescriptor(): AgentModelDescriptor {
-    return resolveModelDescriptorFromPreset(this.defaultModelPreset);
+    return resolveModelDescriptorFromPreset(this.defaultModelPreset, {
+      presetDefinitions: this.modelPresetDefinitions
+    });
   }
 
   private normalizePersistedModelDescriptor(
     descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
   ): AgentModelDescriptor {
-    return normalizeSwarmModelDescriptor(descriptor);
+    return normalizeSwarmModelDescriptor(descriptor, {
+      presetDefinitions: this.modelPresetDefinitions
+    });
   }
 
   private resolveSpawnModel(
@@ -1551,7 +1570,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   ): AgentModelDescriptor {
     const requestedPreset = parseSwarmModelPreset(requested, "spawn_agent.model");
     if (requestedPreset) {
-      return resolveModelDescriptorFromPreset(requestedPreset);
+      return resolveModelDescriptorFromPreset(requestedPreset, {
+        presetDefinitions: this.modelPresetDefinitions
+      });
     }
 
     return this.normalizePersistedModelDescriptor(fallback);

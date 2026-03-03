@@ -10,10 +10,39 @@ export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-opus", "codex-app", "claude-
 
 export type SwarmModelPreset = (typeof SWARM_MODEL_PRESETS)[number];
 
+export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
+
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number];
+
+export type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+export type ClaudeThinkingMode = "disabled" | "enabled" | "adaptive";
+
+export type ClaudeReasoningEffort = "low" | "medium" | "high" | "max";
+
 export interface AgentModelDescriptor {
   provider: string;
   modelId: string;
-  thinkingLevel: string;
+  thinkingLevel: ThinkingLevel;
+}
+
+export interface SwarmModelPresetDefinition {
+  descriptor: AgentModelDescriptor;
+  aliases?: Array<Pick<AgentModelDescriptor, "provider" | "modelId">>;
+}
+
+export type SwarmModelPresetDefinitions = Record<SwarmModelPreset, SwarmModelPresetDefinition>;
+
+export interface ProviderThinkingLevelMappings {
+  codexAppServer: Record<ThinkingLevel, CodexReasoningEffort>;
+  claudeAgentSdk: Record<
+    ThinkingLevel,
+    {
+      thinking: ClaudeThinkingMode;
+      effort?: ClaudeReasoningEffort;
+    }
+  >;
+  piRuntime: Record<ThinkingLevel, ThinkingLevel>;
 }
 
 export interface AgentContextUsage {
@@ -124,6 +153,8 @@ export interface SwarmConfig {
   managerId?: string;
   managerDisplayName: string;
   defaultModel: AgentModelDescriptor;
+  modelPresetDefinitions?: SwarmModelPresetDefinitions;
+  providerThinkingLevelMappings?: ProviderThinkingLevelMappings;
   defaultCwd: string;
   cwdAllowlistRoots: string[];
   paths: SwarmPaths;

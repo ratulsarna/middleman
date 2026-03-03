@@ -66,6 +66,15 @@ describe('createConfig', () => {
         modelId: 'gpt-5.3-codex',
         thinkingLevel: 'xhigh',
       })
+      expect(config.modelPresetDefinitions?.['pi-codex'].descriptor).toEqual({
+        provider: 'openai-codex',
+        modelId: 'gpt-5.3-codex',
+        thinkingLevel: 'xhigh',
+      })
+      expect(config.providerThinkingLevelMappings?.codexAppServer.xhigh).toBe('xhigh')
+      expect(config.providerThinkingLevelMappings?.claudeAgentSdk.off).toEqual({
+        thinking: 'disabled',
+      })
 
       expect(config.paths.dataDir).toBe(resolve(homedir(), '.nexus'))
       expect(config.paths.swarmDir).toBe(resolve(homedir(), '.nexus', 'swarm'))
@@ -126,6 +135,8 @@ describe('createConfig', () => {
           modelId: 'gpt-5.3-codex',
           thinkingLevel: 'xhigh',
         })
+        expect(config.modelPresetDefinitions?.['pi-opus'].descriptor.modelId).toBe('claude-opus-4-6')
+        expect(config.providerThinkingLevelMappings?.piRuntime.medium).toBe('medium')
         expect(config.cwdAllowlistRoots).not.toContain('/tmp/swarm-allowlist')
       }
     )
