@@ -319,6 +319,60 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     throw new Error(`Agent ${this.descriptor.agentId} does not support manual compaction`);
   }
 
+  async getClaudeOutputStyleMetadata(): Promise<{
+    selectedStyle: string | null;
+    availableStyles: string[];
+  }> {
+    this.ensureNotTerminated();
+
+    const auth = await this.resolveAuthToken();
+    let settingSources = [...this.settingsPolicy.primarySources];
+    try {
+      this.validateProjectSettingsReadableOrThrow(settingSources);
+    } catch (error) {
+      if (
+        this.settingsPolicy.enableFallbackOnReadError &&
+        this.settingsPolicy.fallbackSources.length > 0
+      ) {
+        settingSources = [...this.settingsPolicy.fallbackSources];
+      } else {
+        throw error;
+      }
+    }
+
+    const abortController = new AbortController();
+    const queryControl = this.createClaudeQuery({
+      prompt: "Nexus output style metadata probe.",
+      settingSources,
+      auth,
+      abortController,
+      attemptedResumeId: undefined,
+      reasoning: {
+        requestedThinking: "disabled",
+        effectiveThinking: "disabled",
+        thinkingConfig: { type: "disabled" },
+        requestedEffort: undefined,
+        effectiveEffort: undefined
+      },
+      onStderr: () => {}
+    });
+
+    try {
+      const initializationResult = await queryControl.initializationResult();
+      return {
+        selectedStyle: normalizeOutputStyleMetadataValue(initializationResult.output_style),
+        availableStyles: normalizeOutputStyleMetadataList(initializationResult.available_output_styles)
+      };
+    } finally {
+      abortController.abort();
+      try {
+        await queryControl.interrupt();
+      } catch {
+        // Best-effort cleanup for metadata probe query.
+      }
+    }
+  }
+
   getCustomEntries(customType: string): unknown[] {
     const entries = this.sessionManager.getEntries();
     const matches: unknown[] = [];
@@ -1647,6 +1701,31 @@ function normalizeToken(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeOutputStyleMetadataValue(value: unknown): string | null {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeOutputStyleMetadataList(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const styles = new Set<string>();
+  for (const candidate of value) {
+    const normalized = normalizeOutputStyleMetadataValue(candidate);
+    if (normalized) {
+      styles.add(normalized);
+    }
+  }
+
+  return Array.from(styles);
 }
 
 function createAuthRequiredError(reason: string): Error {

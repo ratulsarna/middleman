@@ -26,6 +26,11 @@ class FakeRuntime {
   compactCalls: Array<string | undefined> = []
   terminateCalls = 0
   stopInFlightCalls: Array<{ abort?: boolean } | undefined> = []
+  claudeOutputStyleMetadata: { selectedStyle: string | null; availableStyles: string[] } = {
+    selectedStyle: null,
+    availableStyles: [],
+  }
+  claudeOutputStyleMetadataError: Error | null = null
 
   constructor(descriptor: AgentDescriptor) {
     this.descriptor = descriptor
@@ -84,6 +89,13 @@ class FakeRuntime {
 
   appendCustomEntry(customType: string, data?: unknown): void {
     this.sessionManager.appendCustomEntry(customType, data)
+  }
+
+  async getClaudeOutputStyleMetadata(): Promise<{ selectedStyle: string | null; availableStyles: string[] }> {
+    if (this.claudeOutputStyleMetadataError) {
+      throw this.claudeOutputStyleMetadataError
+    }
+    return this.claudeOutputStyleMetadata
   }
 }
 
@@ -2405,5 +2417,230 @@ describe('SwarmWebSocketServer', () => {
     client.close()
     await once(client, 'close')
     await server.stop()
+  })
+
+  it('supports Claude output-style GET/PUT and persists to project-local settings', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const claudeManager = await manager.createManager('manager', {
+      name: 'Claude Style Manager',
+      cwd: config.defaultCwd,
+      model: 'claude-agent-sdk',
+    })
+
+    const runtime = manager.runtimeByAgentId.get(claudeManager.agentId)
+    if (!runtime) {
+      throw new Error('Expected runtime for Claude manager')
+    }
+    runtime.claudeOutputStyleMetadata = {
+      selectedStyle: 'default',
+      availableStyles: ['default', 'concise', 'technical'],
+    }
+    const initialRuntime = runtime
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const getBeforeResponse = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+      )
+      expect(getBeforeResponse.status).toBe(200)
+      const getBeforePayload = (await getBeforeResponse.json()) as {
+        managerId: string
+        selectedStyle: string | null
+        availableStyles: string[]
+      }
+      expect(getBeforePayload.managerId).toBe(claudeManager.agentId)
+      expect(getBeforePayload.selectedStyle).toBe('default')
+      expect(getBeforePayload.availableStyles).toEqual(['default', 'concise', 'technical'])
+
+      const putResponse = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ outputStyle: 'technical' }),
+        },
+      )
+      expect(putResponse.status).toBe(200)
+
+      const settingsLocalPath = join(claudeManager.cwd, '.claude', 'settings.local.json')
+      const settingsLocal = JSON.parse(await readFile(settingsLocalPath, 'utf8')) as { outputStyle?: string }
+      expect(settingsLocal.outputStyle).toBe('technical')
+
+      const postUpdateRuntime = manager.runtimeByAgentId.get(claudeManager.agentId)
+      expect(postUpdateRuntime).toBeDefined()
+      expect(postUpdateRuntime).not.toBe(initialRuntime)
+
+      const getAfterResponse = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+      )
+      expect(getAfterResponse.status).toBe(200)
+      const getAfterPayload = (await getAfterResponse.json()) as { selectedStyle: string | null }
+      expect(getAfterPayload.selectedStyle).toBe('technical')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns deterministic warning when settings.local is malformed during Claude output-style GET', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const claudeManager = await manager.createManager('manager', {
+      name: 'Claude Warning Manager',
+      cwd: config.defaultCwd,
+      model: 'claude-agent-sdk',
+    })
+
+    const runtime = manager.runtimeByAgentId.get(claudeManager.agentId)
+    if (!runtime) {
+      throw new Error('Expected runtime for Claude manager')
+    }
+    runtime.claudeOutputStyleMetadata = {
+      selectedStyle: 'concise',
+      availableStyles: ['concise', 'detailed'],
+    }
+
+    const settingsDir = join(claudeManager.cwd, '.claude')
+    await mkdir(settingsDir, { recursive: true })
+    await writeFile(join(settingsDir, 'settings.local.json'), '{"outputStyle":', 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+      )
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as {
+        selectedStyle: string | null
+        availableStyles: string[]
+        warning?: string
+      }
+      expect(payload.selectedStyle).toBe('concise')
+      expect(payload.availableStyles).toEqual(['concise', 'detailed'])
+      expect(payload.warning).toContain('Failed to parse')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns warning fallback when Claude runtime metadata is unavailable during output-style GET', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const claudeManager = await manager.createManager('manager', {
+      name: 'Claude Runtime Warning Manager',
+      cwd: config.defaultCwd,
+      model: 'claude-agent-sdk',
+    })
+
+    const runtime = manager.runtimeByAgentId.get(claudeManager.agentId)
+    if (!runtime) {
+      throw new Error('Expected runtime for Claude manager')
+    }
+    runtime.claudeOutputStyleMetadataError = new Error('runtime metadata unavailable')
+
+    const settingsDir = join(claudeManager.cwd, '.claude')
+    await mkdir(settingsDir, { recursive: true })
+    await writeFile(join(settingsDir, 'settings.local.json'), JSON.stringify({ outputStyle: 'technical' }), 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+      )
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as {
+        selectedStyle: string | null
+        availableStyles: string[]
+        warning?: string
+      }
+      expect(payload.selectedStyle).toBe('technical')
+      expect(payload.availableStyles).toEqual([])
+      expect(payload.warning).toContain('Unable to load runtime output styles')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('fails Claude output-style PUT when settings.local is malformed and does not reset manager', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const claudeManager = await manager.createManager('manager', {
+      name: 'Claude Strict Manager',
+      cwd: config.defaultCwd,
+      model: 'claude-agent-sdk',
+    })
+
+    const initialRuntime = manager.runtimeByAgentId.get(claudeManager.agentId)
+    if (!initialRuntime) {
+      throw new Error('Expected runtime for Claude manager')
+    }
+
+    const settingsDir = join(claudeManager.cwd, '.claude')
+    const settingsLocalPath = join(settingsDir, 'settings.local.json')
+    await mkdir(settingsDir, { recursive: true })
+    await writeFile(settingsLocalPath, '{"outputStyle":', 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+        {
+          method: 'PUT',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ outputStyle: 'technical' }),
+        },
+      )
+      expect(response.status).toBe(500)
+      const payload = (await response.json()) as { error?: string }
+      expect(payload.error).toContain('Failed to parse')
+
+      const rawFile = await readFile(settingsLocalPath, 'utf8')
+      expect(rawFile).toBe('{"outputStyle":')
+
+      const currentRuntime = manager.runtimeByAgentId.get(claudeManager.agentId)
+      expect(currentRuntime).toBe(initialRuntime)
+    } finally {
+      await server.stop()
+    }
   })
 })

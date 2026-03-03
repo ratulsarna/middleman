@@ -25,7 +25,7 @@ export function SettingsPanel({
 
   return (
     <SettingsLayout activeTab={activeTab} onTabChange={setActiveTab} onBack={onBack}>
-      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} />}
+      {activeTab === 'general' && <SettingsGeneral wsUrl={wsUrl} managers={managers} />}
       {activeTab === 'auth' && <SettingsAuth wsUrl={wsUrl} />}
       {activeTab === 'integrations' && (
         <SettingsIntegrations

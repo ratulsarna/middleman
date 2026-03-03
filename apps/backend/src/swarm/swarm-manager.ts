@@ -1520,6 +1520,22 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.secretsEnvService.deleteSettingsAuth(provider);
   }
 
+  async getClaudeManagerOutputStyleMetadata(
+    managerId: string
+  ): Promise<{ selectedStyle: string | null; availableStyles: string[] }> {
+    const managerDescriptor = this.getRequiredManagerDescriptor(managerId);
+    if (!isClaudeAgentSdkProvider(managerDescriptor.model.provider)) {
+      throw new Error(`Manager ${managerId} is not using claude-agent-sdk`);
+    }
+
+    const runtime = this.runtimes.get(managerId);
+    if (!runtime || typeof runtime.getClaudeOutputStyleMetadata !== "function") {
+      throw new Error(`Claude metadata runtime is unavailable for manager ${managerId}`);
+    }
+
+    return runtime.getClaudeOutputStyleMetadata();
+  }
+
   private emitConversationMessage(event: ConversationMessageEvent): void {
     this.conversationProjector.emitConversationMessage(event);
   }
@@ -2434,6 +2450,10 @@ function normalizeOptionalAgentId(input: string | undefined): string | undefined
 
   const trimmed = input.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function isClaudeAgentSdkProvider(provider: string): boolean {
+  return provider.trim().toLowerCase() === "claude-agent-sdk";
 }
 
 function parseThinkingLevel(value: unknown, fieldName: string): ThinkingLevel | undefined {

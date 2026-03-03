@@ -7,6 +7,7 @@ import type {
   SettingsAuthProviderId,
   SettingsAuthProvider,
   SettingsAuthOAuthFlowState,
+  ClaudeOutputStyleState,
   SlackSettingsConfig,
   SlackChannelDescriptor,
   TelegramSettingsConfig,
@@ -145,6 +146,38 @@ function isTelegramSettingsConfig(value: unknown): value is TelegramSettingsConf
     hasValidAllowedUserIds && Boolean(config.polling) &&
     Boolean(config.delivery) && Boolean(config.attachments)
   )
+}
+
+function parseClaudeOutputStyleState(value: unknown): ClaudeOutputStyleState | null {
+  if (!value || typeof value !== 'object') return null
+  const payload = value as {
+    managerId?: unknown
+    selectedStyle?: unknown
+    availableStyles?: unknown
+    warning?: unknown
+  }
+
+  if (typeof payload.managerId !== 'string' || payload.managerId.trim().length === 0) return null
+  if (payload.selectedStyle !== null && typeof payload.selectedStyle !== 'string') return null
+  if (!Array.isArray(payload.availableStyles) || payload.availableStyles.some((style) => typeof style !== 'string')) {
+    return null
+  }
+
+  const normalizedAvailableStyles = payload.availableStyles
+    .map((style) => style.trim())
+    .filter((style) => style.length > 0)
+
+  const selectedStyle =
+    typeof payload.selectedStyle === 'string' && payload.selectedStyle.trim().length > 0
+      ? payload.selectedStyle.trim()
+      : null
+
+  return {
+    managerId: payload.managerId,
+    selectedStyle,
+    availableStyles: Array.from(new Set(normalizedAvailableStyles)),
+    warning: typeof payload.warning === 'string' && payload.warning.trim().length > 0 ? payload.warning : undefined,
+  }
 }
 
 /* ------------------------------------------------------------------ */
@@ -299,6 +332,44 @@ function resolveManagerIntegrationEndpoint(wsUrl: string, managerId: string, pro
     throw new Error('managerId is required.')
   }
   return resolveApiEndpoint(wsUrl, `/api/managers/${encodeURIComponent(normalizedManagerId)}/integrations/${provider}${suffix}`)
+}
+
+function resolveManagerClaudeOutputStyleEndpoint(wsUrl: string, managerId: string): string {
+  const normalizedManagerId = managerId.trim()
+  if (!normalizedManagerId) {
+    throw new Error('managerId is required.')
+  }
+  return resolveApiEndpoint(wsUrl, `/api/managers/${encodeURIComponent(normalizedManagerId)}/claude/output-style`)
+}
+
+/* ------------------------------------------------------------------ */
+/*  Claude Output Style API                                           */
+/* ------------------------------------------------------------------ */
+
+export async function fetchClaudeOutputStyle(wsUrl: string, managerId: string): Promise<ClaudeOutputStyleState> {
+  const endpoint = resolveManagerClaudeOutputStyleEndpoint(wsUrl, managerId)
+  const response = await fetch(endpoint)
+  if (!response.ok) throw new Error(await readApiError(response))
+  const payload = parseClaudeOutputStyleState(await response.json())
+  if (!payload) throw new Error('Invalid Claude output-style response from backend.')
+  return payload
+}
+
+export async function updateClaudeOutputStyle(
+  wsUrl: string,
+  managerId: string,
+  outputStyle: string | null,
+): Promise<ClaudeOutputStyleState> {
+  const endpoint = resolveManagerClaudeOutputStyleEndpoint(wsUrl, managerId)
+  const response = await fetch(endpoint, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ outputStyle }),
+  })
+  if (!response.ok) throw new Error(await readApiError(response))
+
+  // Re-read after update so UI state reflects runtime metadata + warnings consistently.
+  return fetchClaudeOutputStyle(wsUrl, managerId)
 }
 
 export async function fetchSlackSettings(wsUrl: string, managerId: string): Promise<{ config: SlackSettingsConfig; status: SlackStatusEvent | null }> {

@@ -102,4 +102,8 @@ export interface SwarmAgentRuntime {
 
   getCustomEntries(customType: string): unknown[];
   appendCustomEntry(customType: string, data?: unknown): void;
+  getClaudeOutputStyleMetadata?(): Promise<{
+    selectedStyle: string | null;
+    availableStyles: string[];
+  }>;
 }

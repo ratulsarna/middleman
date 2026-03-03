@@ -1,10 +1,14 @@
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it, beforeEach, vi } from "vitest";
 import type { AgentDescriptor, SwarmConfig } from "../swarm/types.js";
 
 const runtimeFactoryMocks = vi.hoisted(() => ({
   buildSwarmTools: vi.fn(),
   claudeCreate: vi.fn(),
-  codexCreate: vi.fn()
+  codexCreate: vi.fn(),
+  readClaudeOutputStyleLenient: vi.fn()
 }));
 
 vi.mock("../swarm/swarm-tools.js", () => ({
@@ -21,6 +25,10 @@ vi.mock("../swarm/codex-agent-runtime.js", () => ({
   CodexAgentRuntime: {
     create: runtimeFactoryMocks.codexCreate
   }
+}));
+
+vi.mock("../swarm/claude-output-style-settings.js", () => ({
+  readClaudeOutputStyleLenient: runtimeFactoryMocks.readClaudeOutputStyleLenient
 }));
 
 import { RuntimeFactory } from "../swarm/runtime-factory.js";
@@ -134,6 +142,7 @@ describe("RuntimeFactory", () => {
     runtimeFactoryMocks.buildSwarmTools.mockReset();
     runtimeFactoryMocks.claudeCreate.mockReset();
     runtimeFactoryMocks.codexCreate.mockReset();
+    runtimeFactoryMocks.readClaudeOutputStyleLenient.mockReset();
 
     runtimeFactoryMocks.buildSwarmTools.mockReturnValue([]);
     runtimeFactoryMocks.claudeCreate.mockImplementation(async ({ descriptor }: { descriptor: AgentDescriptor }) =>
@@ -142,6 +151,10 @@ describe("RuntimeFactory", () => {
     runtimeFactoryMocks.codexCreate.mockImplementation(async ({ descriptor }: { descriptor: AgentDescriptor }) =>
       createRuntimeStub(descriptor)
     );
+    runtimeFactoryMocks.readClaudeOutputStyleLenient.mockResolvedValue({
+      settingsPath: "/tmp/project/.claude/settings.local.json",
+      outputStyle: null
+    });
   });
 
   it("dispatches claude-agent-sdk descriptors to ClaudeAgentSdkRuntime with expected options", async () => {
@@ -208,5 +221,112 @@ describe("RuntimeFactory", () => {
       high: "medium",
       xhigh: "high"
     });
+  });
+
+  it("suppresses manager base prompt for claude runtime when outputStyle is selected", async () => {
+    runtimeFactoryMocks.readClaudeOutputStyleLenient.mockResolvedValue({
+      settingsPath: "/tmp/project/.claude/settings.local.json",
+      outputStyle: "concise"
+    });
+
+    const factory = createFactory();
+    const descriptor = {
+      ...createDescriptor("claude-agent-sdk"),
+      role: "manager" as const,
+      managerId: "manager"
+    };
+
+    await factory.createRuntimeForDescriptor(descriptor, "Manager base system prompt");
+
+    const call = runtimeFactoryMocks.claudeCreate.mock.calls[0]?.[0] as {
+      systemPrompt: string;
+    };
+    expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith("/tmp/project");
+    expect(call.systemPrompt).not.toContain("Manager base system prompt");
+    expect(call.systemPrompt).toContain("Repository policy context.");
+    expect(call.systemPrompt).toContain("Persist this context.");
+  });
+
+  it("suppresses manager base prompt when outputStyle exists only in .claude/settings.json", async () => {
+    const claudeSettingsModule = await vi.importActual<typeof import("../swarm/claude-output-style-settings.js")>(
+      "../swarm/claude-output-style-settings.js"
+    );
+    runtimeFactoryMocks.readClaudeOutputStyleLenient.mockImplementation(
+      claudeSettingsModule.readClaudeOutputStyleLenient
+    );
+
+    const projectRoot = await mkdtemp(join(tmpdir(), "runtime-factory-claude-style-"));
+    try {
+      await mkdir(join(projectRoot, ".claude"), { recursive: true });
+      await writeFile(
+        join(projectRoot, ".claude", "settings.json"),
+        `${JSON.stringify({ outputStyle: "technical" }, null, 2)}\n`,
+        "utf8"
+      );
+
+      const factory = createFactory();
+      const descriptor = {
+        ...createDescriptor("claude-agent-sdk"),
+        role: "manager" as const,
+        managerId: "manager",
+        cwd: projectRoot
+      };
+
+      await factory.createRuntimeForDescriptor(descriptor, "Manager base system prompt");
+
+      const call = runtimeFactoryMocks.claudeCreate.mock.calls[0]?.[0] as {
+        systemPrompt: string;
+      };
+      expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith(projectRoot);
+      expect(call.systemPrompt).not.toContain("Manager base system prompt");
+      expect(call.systemPrompt).toContain("Repository policy context.");
+      expect(call.systemPrompt).toContain("Persist this context.");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
+  });
+
+  it("honors .claude/settings.local.json precedence over .claude/settings.json for outputStyle selection", async () => {
+    const claudeSettingsModule = await vi.importActual<typeof import("../swarm/claude-output-style-settings.js")>(
+      "../swarm/claude-output-style-settings.js"
+    );
+    runtimeFactoryMocks.readClaudeOutputStyleLenient.mockImplementation(
+      claudeSettingsModule.readClaudeOutputStyleLenient
+    );
+
+    const projectRoot = await mkdtemp(join(tmpdir(), "runtime-factory-claude-style-local-"));
+    try {
+      await mkdir(join(projectRoot, ".claude"), { recursive: true });
+      await writeFile(
+        join(projectRoot, ".claude", "settings.json"),
+        `${JSON.stringify({ outputStyle: "technical" }, null, 2)}\n`,
+        "utf8"
+      );
+      await writeFile(
+        join(projectRoot, ".claude", "settings.local.json"),
+        `${JSON.stringify({ outputStyle: null }, null, 2)}\n`,
+        "utf8"
+      );
+
+      const factory = createFactory();
+      const descriptor = {
+        ...createDescriptor("claude-agent-sdk"),
+        role: "manager" as const,
+        managerId: "manager",
+        cwd: projectRoot
+      };
+
+      await factory.createRuntimeForDescriptor(descriptor, "Manager base system prompt");
+
+      const call = runtimeFactoryMocks.claudeCreate.mock.calls[0]?.[0] as {
+        systemPrompt: string;
+      };
+      expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith(projectRoot);
+      expect(call.systemPrompt).toContain("Manager base system prompt");
+      expect(call.systemPrompt).toContain("Repository policy context.");
+      expect(call.systemPrompt).toContain("Persist this context.");
+    } finally {
+      await rm(projectRoot, { recursive: true, force: true });
+    }
   });
 });

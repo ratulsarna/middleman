@@ -21,6 +21,13 @@ export interface SettingsAuthProvider {
   maskedValue?: string
 }
 
+export interface ClaudeOutputStyleState {
+  managerId: string
+  selectedStyle: string | null
+  availableStyles: string[]
+  warning?: string
+}
+
 export type SettingsAuthOAuthFlowStatus =
   | 'idle'
   | 'starting'

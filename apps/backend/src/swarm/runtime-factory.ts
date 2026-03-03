@@ -10,6 +10,7 @@ import {
 } from "@mariozechner/pi-coding-agent";
 import { AgentRuntime } from "./agent-runtime.js";
 import { ClaudeAgentSdkRuntime } from "./claude-agent-sdk-runtime.js";
+import { readClaudeOutputStyleLenient } from "./claude-output-style-settings.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
 import { DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS } from "./model-preset-config.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
@@ -253,10 +254,14 @@ export class RuntimeFactory {
     const swarmTools = buildSwarmTools(this.deps.host, descriptor);
     const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
-    const claudeSystemPrompt = this.buildCodexRuntimeSystemPrompt(systemPrompt, {
+    const managerHasSelectedOutputStyle = await this.readManagerClaudeOutputStyleSelection(descriptor);
+    const claudeSystemPrompt = this.buildCodexRuntimeSystemPrompt(
+      managerHasSelectedOutputStyle ? "" : systemPrompt,
+      {
       memoryContextFile: memoryResources.memoryContextFile,
       swarmContextFiles
-    });
+      }
+    );
 
     this.deps.logDebug("runtime:create:start", {
       runtime: "claude-agent-sdk",
@@ -264,7 +269,8 @@ export class RuntimeFactory {
       role: descriptor.role,
       model: descriptor.model,
       archetypeId: descriptor.archetypeId,
-      cwd: descriptor.cwd
+      cwd: descriptor.cwd,
+      managerHasSelectedOutputStyle: descriptor.role === "manager" ? managerHasSelectedOutputStyle : undefined
     });
 
     const runtime = await ClaudeAgentSdkRuntime.create({
@@ -355,6 +361,24 @@ export class RuntimeFactory {
     }
 
     return sections.join("\n\n");
+  }
+
+  private async readManagerClaudeOutputStyleSelection(descriptor: AgentDescriptor): Promise<boolean> {
+    if (descriptor.role !== "manager") {
+      return false;
+    }
+
+    const settingsResult = await readClaudeOutputStyleLenient(descriptor.cwd);
+    if (settingsResult.warning) {
+      this.deps.logDebug("runtime:warning", {
+        runtime: "claude-agent-sdk",
+        event: "output_style_settings_read_warning",
+        agentId: descriptor.agentId,
+        warning: settingsResult.warning
+      });
+    }
+
+    return Boolean(settingsResult.outputStyle);
   }
 
   private resolveModel(modelRegistry: ModelRegistry, descriptor: AgentModelDescriptor): Model<any> | undefined {
