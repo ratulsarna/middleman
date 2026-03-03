@@ -3,6 +3,9 @@ export type AgentStatus = 'idle' | 'streaming' | 'terminated' | 'stopped' | 'err
 export const MANAGER_MODEL_PRESETS = ['pi-codex', 'pi-opus', 'codex-app', 'claude-agent-sdk'] as const
 export type ManagerModelPreset = (typeof MANAGER_MODEL_PRESETS)[number]
 
+export const THINKING_LEVELS = ['off', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
+export type ThinkingLevel = (typeof THINKING_LEVELS)[number]
+
 export interface AgentContextUsage {
   tokens: number
   contextWindow: number
@@ -12,7 +15,7 @@ export interface AgentContextUsage {
 export interface AgentModelDescriptor {
   provider: string
   modelId: string
-  thinkingLevel: string
+  thinkingLevel: ThinkingLevel
 }
 
 export interface AgentDescriptor {

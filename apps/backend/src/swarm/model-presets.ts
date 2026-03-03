@@ -1,32 +1,16 @@
-import type { AgentModelDescriptor, SwarmModelPreset } from "./types.js";
+import { DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS } from "./model-preset-config.js";
+import type {
+  AgentModelDescriptor,
+  SwarmModelPreset,
+  SwarmModelPresetDefinitions
+} from "./types.js";
 import { SWARM_MODEL_PRESETS } from "./types.js";
 
 export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
 
-const MODEL_PRESET_DESCRIPTORS: Record<SwarmModelPreset, AgentModelDescriptor> = {
-  "pi-codex": {
-    provider: "openai-codex",
-    modelId: "gpt-5.3-codex",
-    thinkingLevel: "xhigh"
-  },
-  "pi-opus": {
-    // Anthropic OAuth tokens trigger Claude Code auth headers in pi-ai,
-    // matching the existing Claude Code integration path.
-    provider: "anthropic",
-    modelId: "claude-opus-4-6",
-    thinkingLevel: "xhigh"
-  },
-  "codex-app": {
-    provider: "openai-codex-app-server",
-    modelId: "default",
-    thinkingLevel: "xhigh"
-  },
-  "claude-agent-sdk": {
-    provider: "claude-agent-sdk",
-    modelId: "claude-opus-4-6",
-    thinkingLevel: "xhigh"
-  }
-};
+interface ModelPresetOptions {
+  presetDefinitions?: SwarmModelPresetDefinitions;
+}
 
 const VALID_SWARM_MODEL_PRESET_VALUES = new Set<string>(SWARM_MODEL_PRESETS);
 
@@ -50,69 +34,97 @@ export function parseSwarmModelPreset(value: unknown, fieldName: string): SwarmM
   return value;
 }
 
-export function resolveModelDescriptorFromPreset(preset: SwarmModelPreset): AgentModelDescriptor {
-  const descriptor = MODEL_PRESET_DESCRIPTORS[preset];
+function resolvePresetDefinitions(options?: ModelPresetOptions): SwarmModelPresetDefinitions {
+  return options?.presetDefinitions ?? DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS;
+}
+
+function normalizeModelIdentity(
+  identity: Pick<AgentModelDescriptor, "provider" | "modelId">
+): {
+  provider: string;
+  modelId: string;
+} | undefined {
+  const provider =
+    typeof identity.provider === "string" ? identity.provider.trim().toLowerCase() : "";
+  const modelId =
+    typeof identity.modelId === "string" ? identity.modelId.trim().toLowerCase() : "";
+  if (!provider || !modelId) {
+    return undefined;
+  }
+
   return {
-    provider: descriptor.provider,
-    modelId: descriptor.modelId,
-    thinkingLevel: descriptor.thinkingLevel
+    provider,
+    modelId
+  };
+}
+
+function modelIdentityMatches(
+  left: Pick<AgentModelDescriptor, "provider" | "modelId">,
+  right: Pick<AgentModelDescriptor, "provider" | "modelId">
+): boolean {
+  const normalizedLeft = normalizeModelIdentity(left);
+  const normalizedRight = normalizeModelIdentity(right);
+  if (!normalizedLeft || !normalizedRight) {
+    return false;
+  }
+
+  return (
+    normalizedLeft.provider === normalizedRight.provider && normalizedLeft.modelId === normalizedRight.modelId
+  );
+}
+
+export function resolveModelDescriptorFromPreset(
+  preset: SwarmModelPreset,
+  options?: ModelPresetOptions
+): AgentModelDescriptor {
+  const definition = resolvePresetDefinitions(options)[preset];
+  return {
+    provider: definition.descriptor.provider,
+    modelId: definition.descriptor.modelId,
+    thinkingLevel: definition.descriptor.thinkingLevel
   };
 }
 
 export function inferSwarmModelPresetFromDescriptor(
-  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
+  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined,
+  options?: ModelPresetOptions
 ): SwarmModelPreset | undefined {
   if (!descriptor) {
     return undefined;
   }
 
-  const provider = descriptor.provider?.trim().toLowerCase();
-  const modelId = descriptor.modelId?.trim().toLowerCase();
+  const presetDefinitions = resolvePresetDefinitions(options);
 
-  if (provider === "openai-codex" && modelId === "gpt-5.3-codex") {
-    return "pi-codex";
-  }
+  for (const preset of SWARM_MODEL_PRESETS) {
+    const definition = presetDefinitions[preset];
+    if (modelIdentityMatches(descriptor, definition.descriptor)) {
+      return preset;
+    }
 
-  if (provider === "anthropic" && modelId === "claude-opus-4-6") {
-    return "pi-opus";
-  }
-
-  // Legacy Anthropic model id alias.
-  if (provider === "anthropic" && modelId === "claude-opus-4.6") {
-    return "pi-opus";
-  }
-
-  if (provider === "openai-codex-app-server" && modelId === "default") {
-    return "codex-app";
-  }
-
-  // Legacy codex-app model id aliases.
-  if (
-    provider === "openai-codex-app-server" &&
-    (modelId === "codex-app" || modelId === "codex-app-server")
-  ) {
-    return "codex-app";
-  }
-
-  if (provider === "claude-agent-sdk" && modelId === "claude-opus-4-6") {
-    return "claude-agent-sdk";
+    const aliases = definition.aliases ?? [];
+    if (aliases.some((alias) => modelIdentityMatches(descriptor, alias))) {
+      return preset;
+    }
   }
 
   return undefined;
 }
 
 export function normalizeSwarmModelDescriptor(
-  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined
+  descriptor: Pick<AgentModelDescriptor, "provider" | "modelId"> | undefined,
+  options?: ModelPresetOptions
 ): AgentModelDescriptor {
-  const preset = inferSwarmModelPresetFromDescriptor(descriptor);
+  const preset = inferSwarmModelPresetFromDescriptor(descriptor, options);
   if (!preset) {
-    const provider = descriptor?.provider?.trim() || "<missing>";
-    const modelId = descriptor?.modelId?.trim() || "<missing>";
+    const provider =
+      typeof descriptor?.provider === "string" ? descriptor.provider.trim() || "<missing>" : "<missing>";
+    const modelId =
+      typeof descriptor?.modelId === "string" ? descriptor.modelId.trim() || "<missing>" : "<missing>";
     throw new Error(
       `Unsupported model descriptor ${provider}/${modelId}. ` +
         `Use one of ${describeSwarmModelPresets()} or recreate the agent.`
     );
   }
 
-  return resolveModelDescriptorFromPreset(preset);
+  return resolveModelDescriptorFromPreset(preset, options);
 }

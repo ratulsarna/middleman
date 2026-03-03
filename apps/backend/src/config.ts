@@ -3,7 +3,15 @@ import { homedir } from "node:os";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { normalizeAllowlistRoots } from "./swarm/cwd-policy.js";
 import { getMemoryDirPath } from "./swarm/memory-paths.js";
-import type { SwarmConfig } from "./swarm/types.js";
+import {
+  DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS,
+  DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS
+} from "./swarm/model-preset-config.js";
+import type {
+  ProviderThinkingLevelMappings,
+  SwarmConfig,
+  SwarmModelPresetDefinitions
+} from "./swarm/types.js";
 
 export function createConfig(): SwarmConfig {
   const rootDir = detectRootDir();
@@ -28,6 +36,11 @@ export function createConfig(): SwarmConfig {
     rootDir,
     resolve(homedir(), "worktrees")
   ]);
+  const modelPresetDefinitions = cloneModelPresetDefinitions(DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS);
+  const providerThinkingLevelMappings = cloneProviderThinkingLevelMappings(
+    DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS
+  );
+  const defaultModel = { ...modelPresetDefinitions["pi-codex"].descriptor };
 
   return {
     host: process.env.NEXUS_HOST ?? "127.0.0.1",
@@ -36,11 +49,9 @@ export function createConfig(): SwarmConfig {
     allowNonManagerSubscriptions: true,
     managerId,
     managerDisplayName: "Manager",
-    defaultModel: {
-      provider: "openai-codex",
-      modelId: "gpt-5.3-codex",
-      thinkingLevel: "xhigh"
-    },
+    defaultModel,
+    modelPresetDefinitions,
+    providerThinkingLevelMappings,
     defaultCwd,
     cwdAllowlistRoots,
     paths: {
@@ -61,6 +72,46 @@ export function createConfig(): SwarmConfig {
       secretsFile,
       schedulesFile: undefined
     }
+  };
+}
+
+function cloneModelPresetDefinitions(
+  definitions: SwarmModelPresetDefinitions
+): SwarmModelPresetDefinitions {
+  return {
+    "pi-codex": {
+      descriptor: { ...definitions["pi-codex"].descriptor },
+      aliases: definitions["pi-codex"].aliases?.map((alias) => ({ ...alias }))
+    },
+    "pi-opus": {
+      descriptor: { ...definitions["pi-opus"].descriptor },
+      aliases: definitions["pi-opus"].aliases?.map((alias) => ({ ...alias }))
+    },
+    "codex-app": {
+      descriptor: { ...definitions["codex-app"].descriptor },
+      aliases: definitions["codex-app"].aliases?.map((alias) => ({ ...alias }))
+    },
+    "claude-agent-sdk": {
+      descriptor: { ...definitions["claude-agent-sdk"].descriptor },
+      aliases: definitions["claude-agent-sdk"].aliases?.map((alias) => ({ ...alias }))
+    }
+  };
+}
+
+function cloneProviderThinkingLevelMappings(
+  mappings: ProviderThinkingLevelMappings
+): ProviderThinkingLevelMappings {
+  return {
+    codexAppServer: { ...mappings.codexAppServer },
+    claudeAgentSdk: {
+      off: { ...mappings.claudeAgentSdk.off },
+      minimal: { ...mappings.claudeAgentSdk.minimal },
+      low: { ...mappings.claudeAgentSdk.low },
+      medium: { ...mappings.claudeAgentSdk.medium },
+      high: { ...mappings.claudeAgentSdk.high },
+      xhigh: { ...mappings.claudeAgentSdk.xhigh }
+    },
+    piRuntime: { ...mappings.piRuntime }
   };
 }
 
