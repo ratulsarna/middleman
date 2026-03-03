@@ -16,6 +16,8 @@ import {
   previewForLog
 } from "./runtime-utils.js";
 import { transitionAgentStatus } from "./agent-state-machine.js";
+import { DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS } from "./model-preset-config.js";
+import { persistSessionManagerCustomEntryIfNeeded } from "./session-manager-custom-entry-persistence.js";
 import type {
   RuntimeImageAttachment,
   RuntimeErrorEvent,
@@ -27,10 +29,12 @@ import type {
 } from "./runtime-types.js";
 import type {
   AgentContextUsage,
+  CodexReasoningEffort,
   AgentDescriptor,
   AgentStatus,
   RequestedDeliveryMode,
-  SendMessageReceipt
+  SendMessageReceipt,
+  ThinkingLevel
 } from "./types.js";
 
 const CODEX_RUNTIME_STATE_ENTRY_TYPE = "swarm_codex_runtime_state";
@@ -60,6 +64,19 @@ interface QueuedSteer {
   message: RuntimeUserMessage;
 }
 
+interface ModelCapabilities {
+  supportedEfforts: CodexReasoningEffort[];
+}
+
+const CODEX_EFFORT_RANK: Record<CodexReasoningEffort, number> = {
+  none: 0,
+  minimal: 1,
+  low: 2,
+  medium: 3,
+  high: 4,
+  xhigh: 5
+};
+
 export class CodexAgentRuntime implements SwarmAgentRuntime {
   readonly descriptor: AgentDescriptor;
 
@@ -80,6 +97,10 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private pendingDeliveries: PendingDelivery[] = [];
   private queuedSteers: QueuedSteer[] = [];
   private readonly toolNameByItemId = new Map<string, string>();
+  private readonly thinkingLevelToEffort: Record<ThinkingLevel, CodexReasoningEffort>;
+  private readonly modelCapabilitiesByKey = new Map<string, ModelCapabilities>();
+  private modelCapabilitiesLoaded = false;
+  private modelCapabilitiesLoadPromise: Promise<void> | undefined;
 
   private constructor(options: {
     descriptor: AgentDescriptor;
@@ -88,6 +109,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     systemPrompt: string;
     tools: ToolDefinition[];
     runtimeEnv?: Record<string, string | undefined>;
+    thinkingLevelToEffort?: Record<ThinkingLevel, CodexReasoningEffort>;
   }) {
     this.descriptor = options.descriptor;
     this.callbacks = options.callbacks;
@@ -98,6 +120,9 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.sessionManager = SessionManager.open(options.descriptor.sessionFile);
     this.toolBridge = createCodexToolBridge(options.tools);
     this.sandboxSettings = buildCodexSandboxSettings();
+    this.thinkingLevelToEffort = {
+      ...(options.thinkingLevelToEffort ?? DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS.codexAppServer)
+    };
 
     const command = process.env.CODEX_BIN?.trim() || "codex";
     const runtimeEnv: NodeJS.ProcessEnv = {
@@ -141,6 +166,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     systemPrompt: string;
     tools: ToolDefinition[];
     runtimeEnv?: Record<string, string | undefined>;
+    thinkingLevelToEffort?: Record<ThinkingLevel, CodexReasoningEffort>;
   }): Promise<CodexAgentRuntime> {
     const runtime = new CodexAgentRuntime(options);
 
@@ -293,6 +319,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
   appendCustomEntry(customType: string, data?: unknown): void {
     this.sessionManager.appendCustomEntry(customType, data);
+    persistSessionManagerCustomEntryIfNeeded(this.sessionManager);
   }
 
   private async initialize(): Promise<void> {
@@ -361,7 +388,8 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
           approvalPolicy: "never",
           sandbox: this.sandboxSettings.sandboxMode,
           config: this.sandboxSettings.threadConfig,
-          developerInstructions: this.systemPrompt
+          developerInstructions: this.systemPrompt,
+          model: this.descriptor.model.modelId
         });
 
         const resumedThreadId = parseThreadId(resumed.thread?.id);
@@ -384,6 +412,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       sandbox: this.sandboxSettings.sandboxMode,
       config: this.sandboxSettings.threadConfig,
       developerInstructions: this.systemPrompt,
+      model: this.descriptor.model.modelId,
       dynamicTools: this.toolBridge.dynamicTools
     });
 
@@ -433,11 +462,22 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.startRequestPending = true;
 
     try {
+      const requestedEffort = this.resolveRequestedEffort();
+      const effectiveEffort = await this.resolveEffectiveEffort(this.descriptor.model.modelId, requestedEffort);
       const response = await this.rpc.request<{ turn?: { id?: unknown } }>("turn/start", {
         threadId: this.threadId,
         cwd: this.descriptor.cwd,
         sandboxPolicy: this.sandboxSettings.turnSandboxPolicy,
+        model: this.descriptor.model.modelId,
+        effort: effectiveEffort,
         input: toCodexInputItems(message)
+      });
+
+      this.logRuntimeInfo("turn_start_config", {
+        model: this.descriptor.model.modelId,
+        requestedEffort,
+        effectiveEffort,
+        effortClamped: requestedEffort !== effectiveEffort
       });
 
       const turnId = parseThreadId(response.turn?.id);
@@ -450,6 +490,62 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     } finally {
       this.startRequestPending = false;
     }
+  }
+
+  private resolveRequestedEffort(): CodexReasoningEffort {
+    const thinkingLevel = normalizeThinkingLevel(this.descriptor.model.thinkingLevel);
+    return this.thinkingLevelToEffort[thinkingLevel] ?? this.thinkingLevelToEffort.medium;
+  }
+
+  private async resolveEffectiveEffort(
+    modelId: string,
+    requestedEffort: CodexReasoningEffort
+  ): Promise<CodexReasoningEffort> {
+    const capabilities = await this.getModelCapabilities(modelId);
+    if (!capabilities || capabilities.supportedEfforts.length === 0) {
+      return requestedEffort;
+    }
+
+    return clampEffortToSupportedFloor(requestedEffort, capabilities.supportedEfforts);
+  }
+
+  private async getModelCapabilities(modelId: string): Promise<ModelCapabilities | undefined> {
+    await this.loadModelCapabilities();
+    const normalizedModel = normalizeModelKey(modelId);
+    if (!normalizedModel) {
+      return undefined;
+    }
+
+    return this.modelCapabilitiesByKey.get(normalizedModel);
+  }
+
+  private async loadModelCapabilities(): Promise<void> {
+    if (this.modelCapabilitiesLoaded) {
+      return;
+    }
+
+    if (!this.modelCapabilitiesLoadPromise) {
+      this.modelCapabilitiesLoadPromise = (async () => {
+        try {
+          const response = await this.rpc.request<{ data?: unknown }>("model/list", {});
+          this.modelCapabilitiesByKey.clear();
+          for (const capability of parseModelCapabilities(response?.data)) {
+            this.modelCapabilitiesByKey.set(capability.modelKey, {
+              supportedEfforts: capability.supportedEfforts
+            });
+          }
+          this.modelCapabilitiesLoaded = true;
+        } catch (error) {
+          this.logRuntimeError("prompt_start", error, {
+            action: "model/list"
+          });
+        } finally {
+          this.modelCapabilitiesLoadPromise = undefined;
+        }
+      })();
+    }
+
+    await this.modelCapabilitiesLoadPromise;
   }
 
   private queueSteer(deliveryId: string, message: RuntimeUserMessage): void {
@@ -871,6 +967,15 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       ...details
     });
   }
+
+  private logRuntimeInfo(event: string, details?: Record<string, unknown>): void {
+    console.info(`[swarm][${this.now()}] runtime:info`, {
+      runtime: "codex-app-server",
+      agentId: this.descriptor.agentId,
+      event,
+      ...details
+    });
+  }
 }
 
 // Codex app-server defaults new threads to read-only sandboxing.
@@ -913,6 +1018,162 @@ function parseThreadId(value: unknown): string | undefined {
 
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizeThinkingLevel(value: string): ThinkingLevel {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "x-high" || normalized === "xhigh") {
+    return "xhigh";
+  }
+  if (normalized === "off") {
+    return "off";
+  }
+  if (normalized === "minimal") {
+    return "minimal";
+  }
+  if (normalized === "low") {
+    return "low";
+  }
+  if (normalized === "medium") {
+    return "medium";
+  }
+  if (normalized === "high") {
+    return "high";
+  }
+  return "medium";
+}
+
+function normalizeModelKey(value: unknown): string | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseModelCapabilities(data: unknown): Array<{ modelKey: string; supportedEfforts: CodexReasoningEffort[] }> {
+  if (!Array.isArray(data)) {
+    return [];
+  }
+
+  const capabilities: Array<{ modelKey: string; supportedEfforts: CodexReasoningEffort[] }> = [];
+
+  for (const entry of data) {
+    if (!entry || typeof entry !== "object") {
+      continue;
+    }
+
+    const typed = entry as {
+      id?: unknown;
+      model?: unknown;
+      supportedReasoningEfforts?: unknown;
+      supported_reasoning_efforts?: unknown;
+      defaultReasoningEffort?: unknown;
+      default_reasoning_effort?: unknown;
+    };
+
+    const modelKeys = [typed.model, typed.id]
+      .map((value) => normalizeModelKey(value))
+      .filter((value): value is string => Boolean(value));
+    if (modelKeys.length === 0) {
+      continue;
+    }
+
+    const defaultEffort = parseEffort(typed.defaultReasoningEffort ?? typed.default_reasoning_effort);
+    const rawSupported = typed.supportedReasoningEfforts ?? typed.supported_reasoning_efforts;
+    const supportedEfforts = parseSupportedEfforts(rawSupported, defaultEffort);
+    if (supportedEfforts.length === 0) {
+      continue;
+    }
+
+    for (const modelKey of modelKeys) {
+      capabilities.push({
+        modelKey,
+        supportedEfforts
+      });
+    }
+  }
+
+  return capabilities;
+}
+
+function parseSupportedEfforts(
+  value: unknown,
+  defaultEffort: CodexReasoningEffort | undefined
+): CodexReasoningEffort[] {
+  const efforts: CodexReasoningEffort[] = [];
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (typeof entry === "string") {
+        const parsed = parseEffort(entry);
+        if (parsed) {
+          efforts.push(parsed);
+        }
+        continue;
+      }
+
+      if (entry && typeof entry === "object") {
+        const parsed = parseEffort(
+          (entry as { reasoningEffort?: unknown; reasoning_effort?: unknown }).reasoningEffort ??
+            (entry as { reasoningEffort?: unknown; reasoning_effort?: unknown }).reasoning_effort
+        );
+        if (parsed) {
+          efforts.push(parsed);
+        }
+      }
+    }
+  }
+
+  if (efforts.length === 0 && defaultEffort) {
+    efforts.push(defaultEffort);
+  }
+
+  const deduped = Array.from(new Set(efforts));
+  deduped.sort((left, right) => CODEX_EFFORT_RANK[left] - CODEX_EFFORT_RANK[right]);
+  return deduped;
+}
+
+function parseEffort(value: unknown): CodexReasoningEffort | undefined {
+  if (typeof value !== "string") {
+    return undefined;
+  }
+
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "none" ||
+    normalized === "minimal" ||
+    normalized === "low" ||
+    normalized === "medium" ||
+    normalized === "high" ||
+    normalized === "xhigh"
+  ) {
+    return normalized;
+  }
+
+  return undefined;
+}
+
+function clampEffortToSupportedFloor(
+  requestedEffort: CodexReasoningEffort,
+  supportedEfforts: CodexReasoningEffort[]
+): CodexReasoningEffort {
+  if (supportedEfforts.length === 0) {
+    return requestedEffort;
+  }
+
+  const requestedRank = CODEX_EFFORT_RANK[requestedEffort];
+  let floorEffort: CodexReasoningEffort | undefined;
+
+  for (const effort of supportedEfforts) {
+    if (CODEX_EFFORT_RANK[effort] > requestedRank) {
+      break;
+    }
+    floorEffort = effort;
+  }
+
+  return floorEffort ?? supportedEfforts[0];
 }
 
 function parseThreadItemFromNotification(value: unknown):

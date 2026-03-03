@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -56,7 +56,10 @@ vi.mock('../swarm/codex-jsonrpc-client.js', () => ({
 
 import { CodexAgentRuntime } from '../swarm/codex-agent-runtime.js'
 
-function makeDescriptor(baseDir: string): AgentDescriptor {
+function makeDescriptor(
+  baseDir: string,
+  modelOverrides: Partial<AgentDescriptor['model']> = {},
+): AgentDescriptor {
   return {
     agentId: 'codex-worker',
     displayName: 'Codex Worker',
@@ -70,6 +73,7 @@ function makeDescriptor(baseDir: string): AgentDescriptor {
       provider: 'openai-codex-app-server',
       modelId: 'default',
       thinkingLevel: 'xhigh',
+      ...modelOverrides,
     },
     sessionFile: join(baseDir, 'sessions', 'codex-worker.jsonl'),
   }
@@ -91,6 +95,112 @@ beforeEach(() => {
 })
 
 describe('CodexAgentRuntime behavior', () => {
+  it('persists codex runtime state custom entry to session file during bootstrap', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir)
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-bootstrap' } }
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    const persistedSession = await readFile(descriptor.sessionFile, 'utf8')
+    expect(persistedSession).toContain('"type":"session"')
+    expect(persistedSession).toContain('"customType":"swarm_codex_runtime_state"')
+    expect(persistedSession).toContain('"threadId":"thread-bootstrap"')
+
+    await runtime.terminate({ abort: false })
+  })
+
+  it('resumes persisted codex thread id across runtime restart', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir, {
+      modelId: 'restart-model',
+    })
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    let phase: 'first-run' | 'second-run' = 'first-run'
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string, params: unknown) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (phase === 'first-run' && method === 'thread/start') {
+        expect(params).toMatchObject({
+          model: 'restart-model',
+        })
+        return { thread: { id: 'thread-first' } }
+      }
+
+      if (phase === 'second-run' && method === 'thread/resume') {
+        expect(params).toMatchObject({
+          threadId: 'thread-first',
+          model: 'restart-model',
+        })
+        return { thread: { id: 'thread-first' } }
+      }
+
+      throw new Error(`Unexpected method in ${phase}: ${method}`)
+    })
+
+    const runtime1 = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+    await runtime1.terminate({ abort: false })
+
+    phase = 'second-run'
+
+    const runtime2 = await CodexAgentRuntime.create({
+      descriptor: {
+        ...descriptor,
+        status: 'idle',
+      },
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+    await runtime2.terminate({ abort: false })
+
+    const firstInstance = rpcMockState.instances[0]
+    const secondInstance = rpcMockState.instances[1]
+    expect(firstInstance.requestCalls.some((entry: { method: string }) => entry.method === 'thread/start')).toBe(true)
+    expect(firstInstance.requestCalls.some((entry: { method: string }) => entry.method === 'thread/resume')).toBe(false)
+    expect(secondInstance.requestCalls.some((entry: { method: string }) => entry.method === 'thread/resume')).toBe(true)
+    expect(secondInstance.requestCalls.some((entry: { method: string }) => entry.method === 'thread/start')).toBe(false)
+  })
+
   it('authenticates with CODEX_API_KEY and resumes a persisted thread', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
     const descriptor = makeDescriptor(tempDir)
@@ -134,6 +244,7 @@ describe('CodexAgentRuntime behavior', () => {
           expect(params).toMatchObject({
             threadId: 'persisted-thread',
             cwd: descriptor.cwd,
+            model: descriptor.model.modelId,
           })
           return { thread: { id: 'resumed-thread' } }
         }
@@ -180,7 +291,7 @@ describe('CodexAgentRuntime behavior', () => {
     })
 
     try {
-      rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string, params: unknown) => {
         if (method === 'initialize') {
           return {}
         }
@@ -194,6 +305,9 @@ describe('CodexAgentRuntime behavior', () => {
         }
 
         if (method === 'thread/start') {
+          expect(params).toMatchObject({
+            model: 'default',
+          })
           return { thread: { id: 'new-thread' } }
         }
 
@@ -268,7 +382,26 @@ describe('CodexAgentRuntime behavior', () => {
         return { thread: { id: 'thread-1' } }
       }
 
+      if (method === 'model/list') {
+        return {
+          data: [
+            {
+              id: 'default',
+              model: 'default',
+              supportedReasoningEfforts: [
+                { reasoningEffort: 'low', description: 'low' },
+                { reasoningEffort: 'xhigh', description: 'xhigh' },
+              ],
+            },
+          ],
+        }
+      }
+
       if (method === 'turn/start') {
+        expect(params).toMatchObject({
+          model: 'default',
+          effort: 'xhigh',
+        })
         return await turnStartDeferred.promise
       }
 
@@ -435,6 +568,21 @@ describe('CodexAgentRuntime behavior', () => {
         return { thread: { id: 'thread-1' } }
       }
 
+      if (method === 'model/list') {
+        return {
+          data: [
+            {
+              id: 'default',
+              model: 'default',
+              supportedReasoningEfforts: [
+                { reasoningEffort: 'minimal', description: 'minimal' },
+                { reasoningEffort: 'high', description: 'high' },
+              ],
+            },
+          ],
+        }
+      }
+
       if (method === 'turn/start') {
         return { turn: { id: 'turn-1' } }
       }
@@ -474,5 +622,262 @@ describe('CodexAgentRuntime behavior', () => {
     ).toBe(true)
     expect(runtime.getPendingCount()).toBe(0)
     expect(runtime.getStatus()).toBe('terminated')
+  })
+
+  it('clamps unsupported requested effort to nearest supported lower effort', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir, {
+      modelId: 'gpt-floor',
+      thinkingLevel: 'xhigh',
+    })
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string, params: unknown) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        expect(params).toMatchObject({
+          model: 'gpt-floor',
+        })
+        return { thread: { id: 'thread-floor' } }
+      }
+
+      if (method === 'model/list') {
+        return {
+          data: [
+            {
+              id: 'gpt-floor',
+              model: 'gpt-floor',
+              supportedReasoningEfforts: [
+                { reasoningEffort: 'minimal', description: 'minimal' },
+                { reasoningEffort: 'medium', description: 'medium' },
+              ],
+            },
+          ],
+        }
+      }
+
+      if (method === 'turn/start') {
+        expect(params).toMatchObject({
+          model: 'gpt-floor',
+          effort: 'medium',
+        })
+        return { turn: { id: 'turn-floor' } }
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    await runtime.sendMessage('trigger floor clamp')
+    await runtime.terminate({ abort: false })
+  })
+
+  it('uses the minimum supported effort when requested effort is below all supported efforts', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir, {
+      modelId: 'gpt-minimum',
+      thinkingLevel: 'off',
+    })
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string, params: unknown) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-min' } }
+      }
+
+      if (method === 'model/list') {
+        return {
+          data: [
+            {
+              id: 'gpt-minimum',
+              model: 'gpt-minimum',
+              supportedReasoningEfforts: [
+                { reasoningEffort: 'low', description: 'low' },
+                { reasoningEffort: 'high', description: 'high' },
+              ],
+            },
+          ],
+        }
+      }
+
+      if (method === 'turn/start') {
+        expect(params).toMatchObject({
+          model: 'gpt-minimum',
+          effort: 'low',
+        })
+        return { turn: { id: 'turn-min' } }
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    await runtime.sendMessage('trigger minimum clamp')
+    await runtime.terminate({ abort: false })
+  })
+
+  it('falls back to mapped effort when model/list is unavailable', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir, {
+      modelId: 'gpt-fallback',
+      thinkingLevel: 'high',
+    })
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string, params: unknown) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-fallback' } }
+      }
+
+      if (method === 'model/list') {
+        throw new Error('model list unavailable')
+      }
+
+      if (method === 'turn/start') {
+        expect(params).toMatchObject({
+          model: 'gpt-fallback',
+          effort: 'high',
+        })
+        return { turn: { id: 'turn-fallback' } }
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    await runtime.sendMessage('trigger fallback')
+    await runtime.terminate({ abort: false })
+  })
+
+  it('retries model/list after transient failure and clamps recovered effort on next turn', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir, {
+      modelId: 'gpt-recover',
+      thinkingLevel: 'xhigh',
+    })
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    let modelListCalls = 0
+    let turnStartCalls = 0
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string, params: unknown) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-recover' } }
+      }
+
+      if (method === 'model/list') {
+        modelListCalls += 1
+        if (modelListCalls === 1) {
+          throw new Error('transient model/list failure')
+        }
+
+        return {
+          data: [
+            {
+              id: 'gpt-recover',
+              model: 'gpt-recover',
+              supportedReasoningEfforts: [
+                { reasoningEffort: 'minimal', description: 'minimal' },
+                { reasoningEffort: 'medium', description: 'medium' },
+              ],
+            },
+          ],
+        }
+      }
+
+      if (method === 'turn/start') {
+        turnStartCalls += 1
+        if (turnStartCalls === 1) {
+          expect(params).toMatchObject({
+            model: 'gpt-recover',
+            effort: 'xhigh',
+          })
+          return { turn: { id: 'turn-recover-1' } }
+        }
+
+        expect(params).toMatchObject({
+          model: 'gpt-recover',
+          effort: 'medium',
+        })
+        return { turn: { id: 'turn-recover-2' } }
+      }
+
+      throw new Error(`Unexpected method: ${method}`)
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async () => {},
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    await runtime.sendMessage('first turn falls back to mapped effort')
+    const client = rpcMockState.instances[0]
+    await client.emitNotification({
+      method: 'turn/completed',
+      params: {},
+    })
+
+    await runtime.sendMessage('second turn should clamp from refreshed capabilities')
+    expect(modelListCalls).toBe(2)
+    await runtime.terminate({ abort: false })
   })
 })

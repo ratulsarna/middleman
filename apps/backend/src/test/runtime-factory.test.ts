@@ -62,10 +62,21 @@ function createRuntimeStub(descriptor: AgentDescriptor) {
 }
 
 function createFactory() {
+  const codexThinkingLevelToEffort = {
+    off: "none",
+    low: "minimal",
+    medium: "low",
+    high: "medium",
+    xhigh: "high"
+  } as const;
+
   const config = {
     paths: {
       dataDir: "/tmp/swarm-data",
       authFile: "/tmp/swarm-data/auth/auth.json"
+    },
+    providerThinkingLevelMappings: {
+      codexAppServer: codexThinkingLevelToEffort
     }
   } as SwarmConfig;
 
@@ -166,5 +177,16 @@ describe("RuntimeFactory", () => {
 
     expect(runtimeFactoryMocks.codexCreate).toHaveBeenCalledTimes(1);
     expect(runtimeFactoryMocks.claudeCreate).not.toHaveBeenCalled();
+
+    const call = runtimeFactoryMocks.codexCreate.mock.calls[0]?.[0] as {
+      thinkingLevelToEffort: Record<string, string>;
+    };
+    expect(call.thinkingLevelToEffort).toEqual({
+      off: "none",
+      low: "minimal",
+      medium: "low",
+      high: "medium",
+      xhigh: "high"
+    });
   });
 });

@@ -11,6 +11,7 @@ import {
 import { AgentRuntime } from "./agent-runtime.js";
 import { ClaudeAgentSdkRuntime } from "./claude-agent-sdk-runtime.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
+import { DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS } from "./model-preset-config.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
 import type {
@@ -229,7 +230,10 @@ export class RuntimeFactory {
       runtimeEnv: {
         SWARM_DATA_DIR: this.deps.config.paths.dataDir,
         SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
-      }
+      },
+      thinkingLevelToEffort:
+        this.deps.config.providerThinkingLevelMappings?.codexAppServer ??
+        DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS.codexAppServer
     });
 
     this.deps.logDebug("runtime:create:ready", {
