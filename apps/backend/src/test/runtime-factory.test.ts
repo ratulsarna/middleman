@@ -136,6 +136,11 @@ describe("RuntimeFactory", () => {
       authFile: string;
       runtimeEnv: Record<string, string>;
       systemPrompt: string;
+      settingsPolicy: {
+        primarySources: string[];
+        fallbackSources: string[];
+        enableFallbackOnReadError: boolean;
+      };
     };
     expect(call.authFile).toBe("/tmp/swarm-data/auth/auth.json");
     expect(call.runtimeEnv).toMatchObject({
@@ -146,6 +151,11 @@ describe("RuntimeFactory", () => {
     expect(call.systemPrompt).toContain("Base system prompt");
     expect(call.systemPrompt).toContain("Repository policy context.");
     expect(call.systemPrompt).toContain("Persist this context.");
+    expect(call.settingsPolicy).toEqual({
+      primarySources: ["project"],
+      fallbackSources: [],
+      enableFallbackOnReadError: true
+    });
   });
 
   it("keeps codex-app-server descriptors on CodexAgentRuntime", async () => {

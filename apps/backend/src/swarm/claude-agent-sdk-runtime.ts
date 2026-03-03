@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import {
   createSdkMcpServer,
   query,
+  type SettingSource,
   type Query,
   type SDKAssistantMessage,
   type SDKAssistantMessageError,
@@ -59,6 +60,12 @@ interface ClaudeRuntimeState {
   sessionId: string;
 }
 
+interface ClaudeSettingsPolicy {
+  primarySources: SettingSource[];
+  fallbackSources: SettingSource[];
+  enableFallbackOnReadError: boolean;
+}
+
 interface ClaudeExecutionErrorDetails extends Record<string, unknown> {
   runtime: "claude-agent-sdk";
   outcome: string;
@@ -91,6 +98,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   private readonly authStorage: AuthStorage;
   private readonly sessionManager: SessionManager;
   private readonly runtimeEnv: Record<string, string | undefined>;
+  private readonly settingsPolicy: ClaudeSettingsPolicy;
   private readonly sdkMcpServer: ReturnType<typeof createSdkMcpServer>;
   private readonly runtimeStateFile: string;
 
@@ -102,6 +110,8 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   private currentAbortController: AbortController | undefined;
   private activeToolsById = new Map<string, ActiveToolProgress>();
   private readonly resumeRecoveryAttemptedDeliveryIds = new Set<string>();
+  private readonly settingsFallbackAttemptedDeliveryIds = new Set<string>();
+  private readonly fallbackSettingsDeliveryIds = new Set<string>();
   private isTerminating = false;
   private isStopping = false;
   private sessionId: string | undefined;
@@ -114,6 +124,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     tools: ToolDefinition[];
     authFile: string;
     runtimeEnv?: Record<string, string | undefined>;
+    settingsPolicy?: Partial<ClaudeSettingsPolicy>;
   }) {
     this.descriptor = options.descriptor;
     this.callbacks = options.callbacks;
@@ -127,6 +138,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     this.runtimeEnv = {
       ...options.runtimeEnv
     };
+    this.settingsPolicy = normalizeSettingsPolicy(options.settingsPolicy);
 
     this.sdkMcpServer = createSdkMcpServer({
       name: TOOL_MCP_SERVER_NAME,
@@ -176,6 +188,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     tools: ToolDefinition[];
     authFile: string;
     runtimeEnv?: Record<string, string | undefined>;
+    settingsPolicy?: Partial<ClaudeSettingsPolicy>;
   }): Promise<ClaudeAgentSdkRuntime> {
     const runtime = new ClaudeAgentSdkRuntime(options);
 
@@ -237,6 +250,8 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     this.pendingDeliveries = [];
     this.processingLoop = undefined;
     this.activeToolsById.clear();
+    this.settingsFallbackAttemptedDeliveryIds.clear();
+    this.fallbackSettingsDeliveryIds.clear();
 
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
@@ -261,6 +276,8 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
 
     this.pendingDeliveries = [];
     this.activeToolsById.clear();
+    this.settingsFallbackAttemptedDeliveryIds.clear();
+    this.fallbackSettingsDeliveryIds.clear();
 
     await this.updateStatus("idle");
     this.isStopping = false;
@@ -319,6 +336,8 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
       try {
         await this.executeDelivery(next);
         this.resumeRecoveryAttemptedDeliveryIds.delete(next.deliveryId);
+        this.settingsFallbackAttemptedDeliveryIds.delete(next.deliveryId);
+        this.fallbackSettingsDeliveryIds.delete(next.deliveryId);
       } catch (error) {
         if (this.status === "terminated" || this.isStopping || isAbortError(error)) {
           break;
@@ -335,6 +354,23 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
           continue;
         }
         this.resumeRecoveryAttemptedDeliveryIds.delete(next.deliveryId);
+
+        if (
+          this.settingsPolicy.enableFallbackOnReadError &&
+          !this.settingsFallbackAttemptedDeliveryIds.has(next.deliveryId)
+        ) {
+          const settingsReadFailureReason = this.classifySettingsReadFailureReason(error);
+          if (settingsReadFailureReason) {
+            this.settingsFallbackAttemptedDeliveryIds.add(next.deliveryId);
+            this.fallbackSettingsDeliveryIds.add(next.deliveryId);
+            this.logSettingsFallbackWarning(next.deliveryId, settingsReadFailureReason);
+            this.pendingDeliveries.unshift(next);
+            await this.updateStatus("idle");
+            continue;
+          }
+        }
+        this.settingsFallbackAttemptedDeliveryIds.delete(next.deliveryId);
+        this.fallbackSettingsDeliveryIds.delete(next.deliveryId);
 
         const message = errorToMessage(error);
 
@@ -376,6 +412,9 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
 
     const auth = await this.resolveAuthToken();
     const prompt = this.toPromptText(delivery.message);
+    const settingSources = this.resolveSettingSources(delivery.deliveryId);
+    this.logQueryAttempt(delivery.deliveryId, settingSources);
+    this.validateProjectSettingsReadableOrThrow(settingSources);
     const abortController = new AbortController();
     const sessionIdAtStart = this.sessionId;
     const attemptedResumeId = sessionIdAtStart;
@@ -397,6 +436,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
         cwd: this.descriptor.cwd,
         model: this.descriptor.model.modelId,
         systemPrompt: this.systemPrompt,
+        settingSources,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: false,
@@ -818,6 +858,114 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     };
 
     return env;
+  }
+
+  private resolveSettingSources(deliveryId: string): SettingSource[] {
+    if (this.fallbackSettingsDeliveryIds.has(deliveryId)) {
+      return [...this.settingsPolicy.fallbackSources];
+    }
+
+    return [...this.settingsPolicy.primarySources];
+  }
+
+  private classifySettingsReadFailureReason(error: unknown): string | undefined {
+    if (isAuthRequiredError(error) || isResumeRecoveryError(error)) {
+      return undefined;
+    }
+
+    const candidates: string[] = [];
+    const pushCandidate = (value: unknown) => {
+      if (typeof value !== "string") {
+        return;
+      }
+
+      const trimmed = value.trim();
+      if (!trimmed) {
+        return;
+      }
+
+      if (!candidates.includes(trimmed)) {
+        candidates.push(trimmed);
+      }
+    };
+
+    pushCandidate(errorToMessage(error));
+
+    const details = readErrorDetails(error);
+    if (details?.settingsReadFailure === true) {
+      const detailedReason = details?.settingsReadFailureReason;
+      if (typeof detailedReason === "string" && detailedReason.trim().length > 0) {
+        return detailedReason.trim();
+      }
+    }
+    pushCandidate(details?.normalizedMessage);
+    pushCandidate(details?.stderrSummary);
+    pushCandidate(details?.lastAssistantErrorMessage);
+    pushCandidate(details?.lastAuthStatusError);
+
+    for (const candidate of candidates) {
+      if (looksLikeSettingsReadFailure(candidate)) {
+        return candidate;
+      }
+    }
+
+    return undefined;
+  }
+
+  private logSettingsFallbackWarning(deliveryId: string, reason: string): void {
+    console.warn(`[swarm][${this.now()}] runtime:warning`, {
+      runtime: "claude-agent-sdk",
+      event: "settings_load_fallback",
+      agentId: this.descriptor.agentId,
+      deliveryId,
+      attemptedSources: [...this.settingsPolicy.primarySources],
+      fallbackSources: [...this.settingsPolicy.fallbackSources],
+      reason
+    });
+  }
+
+  private logQueryAttempt(deliveryId: string, settingSources: SettingSource[]): void {
+    console.info(`[swarm][${this.now()}] runtime:query_attempt`, {
+      runtime: "claude-agent-sdk",
+      event: "query_attempt",
+      agentId: this.descriptor.agentId,
+      deliveryId,
+      settingSources
+    });
+  }
+
+  private validateProjectSettingsReadableOrThrow(settingSources: SettingSource[]): void {
+    if (!settingSources.includes("project")) {
+      return;
+    }
+
+    const settingsPath = `${this.descriptor.cwd}/.claude/settings.json`;
+    if (!existsSync(settingsPath)) {
+      return;
+    }
+
+    let raw: string;
+    try {
+      raw = readFileSync(settingsPath, "utf8");
+    } catch (error) {
+      const reason = `Failed to read project settings file at ${settingsPath}: ${errorToMessage(error)}`;
+      throw attachErrorDetails(new Error(reason), {
+        settingsReadFailure: true,
+        settingsReadFailureReason: reason,
+        settingsPath
+      });
+    }
+
+    try {
+      JSON.parse(raw);
+    } catch (error) {
+      const reason = `Failed to parse project settings file at ${settingsPath}: ${errorToMessage(error)}`;
+      throw attachErrorDetails(new Error(reason), {
+        settingsReadFailure: true,
+        settingsReadFailureReason: reason,
+        settingsPath
+      });
+    }
   }
 
   private readPersistedRuntimeStateFromFile(): { sessionId?: unknown } | undefined {
@@ -1541,6 +1689,61 @@ function isAbortError(error: unknown): boolean {
   }
 
   return name === "AbortError";
+}
+
+function normalizeSettingsPolicy(policy: Partial<ClaudeSettingsPolicy> | undefined): ClaudeSettingsPolicy {
+  const primarySources = normalizeSettingSources(policy?.primarySources, ["project"]);
+  const fallbackSources = normalizeSettingSources(policy?.fallbackSources, []);
+
+  return {
+    primarySources,
+    fallbackSources,
+    enableFallbackOnReadError: policy?.enableFallbackOnReadError ?? true
+  };
+}
+
+function normalizeSettingSources(
+  value: readonly SettingSource[] | undefined,
+  defaults: SettingSource[]
+): SettingSource[] {
+  const seen = new Set<SettingSource>();
+  const normalized: SettingSource[] = [];
+
+  for (const source of value ?? defaults) {
+    if (source !== "user" && source !== "project" && source !== "local") {
+      continue;
+    }
+
+    if (seen.has(source)) {
+      continue;
+    }
+
+    seen.add(source);
+    normalized.push(source);
+  }
+
+  return normalized;
+}
+
+function looksLikeSettingsReadFailure(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+
+  const explicitSettingsTargetPatterns = [
+    /\.claude[\\/](settings(\.local)?\.json)/u,
+    /\bclaude\s+settings(\s+file)?\b/u
+  ];
+  const explicitReadOrParseFailurePatterns = [
+    /\b(failed|unable|cannot|can't)\s+to\s+(read|load|parse|decode)\b/u,
+    /\b(permission denied|eacces|enoent|invalid json|unexpected token|parse error)\b/u
+  ];
+
+  return (
+    explicitSettingsTargetPatterns.some((pattern) => pattern.test(normalized)) &&
+    explicitReadOrParseFailurePatterns.some((pattern) => pattern.test(normalized))
+  );
 }
 
 function summarizeSdkStderr(chunks: string[]): string | undefined {

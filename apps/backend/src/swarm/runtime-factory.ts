@@ -21,6 +21,12 @@ import type {
   SwarmConfig
 } from "./types.js";
 
+const CLAUDE_PROJECT_ONLY_SETTINGS_POLICY = Object.freeze({
+  primarySources: ["project"] as const,
+  fallbackSources: [] as const,
+  enableFallbackOnReadError: true
+});
+
 interface RuntimeFactoryDependencies {
   host: SwarmToolHost;
   config: SwarmConfig;
@@ -281,6 +287,11 @@ export class RuntimeFactory {
         SWARM_DATA_DIR: this.deps.config.paths.dataDir,
         SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path,
         CLAUDE_CONFIG_DIR: resolve(this.deps.config.paths.dataDir, "claude-code")
+      },
+      settingsPolicy: {
+        primarySources: [...CLAUDE_PROJECT_ONLY_SETTINGS_POLICY.primarySources],
+        fallbackSources: [...CLAUDE_PROJECT_ONLY_SETTINGS_POLICY.fallbackSources],
+        enableFallbackOnReadError: CLAUDE_PROJECT_ONLY_SETTINGS_POLICY.enableFallbackOnReadError
       }
     });
 

@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -33,6 +33,15 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
         for (const message of messages) {
           if (isClosed) {
             return;
+          }
+          if (
+            message &&
+            typeof message === "object" &&
+            "__delay" in (message as Record<string, unknown>) &&
+            typeof (message as { __delay?: unknown }).__delay === "number"
+          ) {
+            await new Promise((resolve) => setTimeout(resolve, (message as { __delay: number }).__delay));
+            continue;
           }
           if (
             message &&
@@ -295,10 +304,12 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
     await waitFor(() => runtime.getPendingCount() === 0 && runtime.getStatus() === "idle");
 
     const env = sdkMockState.queryCalls[0]?.options?.env as Record<string, string | undefined> | undefined;
+    const settingSources = sdkMockState.queryCalls[0]?.options?.settingSources as string[] | undefined;
     expect(env?.CLAUDE_CODE_OAUTH_TOKEN).toBe("claude-oauth-token");
     expect(env?.CLAUDE_CODE_OAUTH_REFRESH_TOKEN).toBe("claude-refresh-token");
     expect(env?.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
+    expect(settingSources).toEqual(["project"]);
 
     await runtime.terminate({ abort: true });
   });
@@ -502,6 +513,9 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
 
     await runtime.sendMessage("trigger error");
     await waitFor(() => runtimeErrors.length > 0);
+
+    expect(sdkMockState.queryCalls).toHaveLength(1);
+    expect(sdkMockState.queryCalls[0]?.options?.settingSources).toEqual(["project"]);
 
     const lastError = runtimeErrors[runtimeErrors.length - 1];
     expect(lastError?.details?.retriable).toBe(true);
@@ -924,5 +938,390 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
     expect(runtimeErrors[0]?.details?.retriable).toBe(true);
 
     await runtime.terminate({ abort: true });
+  });
+
+  it("retries once with fallback settings and emits a structured warning for settings read failures", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      sdkMockState.streams.push(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            session_id: "settings-fail-session",
+            usage: undefined,
+            modelUsage: {},
+            errors: ["Failed to parse .claude/settings.json: Unexpected token } in JSON at position 12"]
+          }
+        ],
+        [
+          {
+            type: "assistant",
+            session_id: "settings-fallback-session",
+            message: { content: [{ type: "text", text: "fallback succeeded" }] }
+          },
+          {
+            type: "result",
+            subtype: "success",
+            session_id: "settings-fallback-session",
+            usage: undefined,
+            modelUsage: {}
+          }
+        ]
+      );
+
+      const rootDir = await createRuntimeRootDir();
+      const authFile = join(rootDir, "auth", "auth.json");
+      const runtimeErrors: RuntimeErrorEvent[] = [];
+
+      setAuthCredential(authFile, "claude-agent-sdk", {
+        type: "oauth",
+        access: "claude-oauth-token",
+        refresh: "",
+        expires: String(Date.now() + 60_000)
+      } as unknown as AuthCredential);
+
+      const runtime = await ClaudeAgentSdkRuntime.create({
+        descriptor: createDescriptor(rootDir),
+        callbacks: {
+          onStatusChange: async () => {},
+          onRuntimeError: async (_agentId, error) => {
+            runtimeErrors.push(error);
+          }
+        },
+        systemPrompt: "You are a worker",
+        tools: [],
+        authFile
+      });
+
+      await runtime.sendMessage("trigger settings failure fallback");
+      await waitFor(() => runtime.getPendingCount() === 0 && runtime.getStatus() === "idle");
+
+      expect(sdkMockState.queryCalls).toHaveLength(2);
+      expect(sdkMockState.queryCalls[0]?.options?.settingSources).toEqual(["project"]);
+      expect(sdkMockState.queryCalls[1]?.options?.settingSources).toEqual([]);
+      expect(runtimeErrors).toHaveLength(0);
+
+      expect(warnSpy).toHaveBeenCalled();
+      const warningPayload = warnSpy.mock.calls.find((call) =>
+        call.some((entry) => typeof entry === "object" && entry && "event" in (entry as Record<string, unknown>))
+      )?.[1] as
+        | {
+            runtime?: string;
+            event?: string;
+            attemptedSources?: string[];
+            fallbackSources?: string[];
+            reason?: string;
+          }
+        | undefined;
+      expect(warningPayload?.runtime).toBe("claude-agent-sdk");
+      expect(warningPayload?.event).toBe("settings_load_fallback");
+      expect(warningPayload?.attemptedSources).toEqual(["project"]);
+      expect(warningPayload?.fallbackSources).toEqual([]);
+      expect(warningPayload?.reason).toContain(".claude/settings.json");
+
+      await runtime.terminate({ abort: true });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("stops after one fallback retry when the fallback attempt also fails", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      sdkMockState.streams.push(
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            session_id: "settings-fail-first-attempt",
+            usage: undefined,
+            modelUsage: {},
+            errors: ["Failed to parse .claude/settings.json: Unexpected token } in JSON at position 12"]
+          }
+        ],
+        [
+          {
+            type: "result",
+            subtype: "error_during_execution",
+            session_id: "settings-fail-fallback-attempt",
+            usage: undefined,
+            modelUsage: {},
+            errors: ["Failed to parse .claude/settings.json: Unexpected token ] in JSON at position 8"]
+          }
+        ]
+      );
+
+      const rootDir = await createRuntimeRootDir();
+      const authFile = join(rootDir, "auth", "auth.json");
+      const runtimeErrors: RuntimeErrorEvent[] = [];
+
+      setAuthCredential(authFile, "claude-agent-sdk", {
+        type: "oauth",
+        access: "claude-oauth-token",
+        refresh: "",
+        expires: String(Date.now() + 60_000)
+      } as unknown as AuthCredential);
+
+      const runtime = await ClaudeAgentSdkRuntime.create({
+        descriptor: createDescriptor(rootDir),
+        callbacks: {
+          onStatusChange: async () => {},
+          onRuntimeError: async (_agentId, error) => {
+            runtimeErrors.push(error);
+          }
+        },
+        systemPrompt: "You are a worker",
+        tools: [],
+        authFile
+      });
+
+      await runtime.sendMessage("trigger double settings failure");
+      await waitFor(() => runtimeErrors.length > 0);
+
+      expect(sdkMockState.queryCalls).toHaveLength(2);
+      expect(sdkMockState.queryCalls[0]?.options?.settingSources).toEqual(["project"]);
+      expect(sdkMockState.queryCalls[1]?.options?.settingSources).toEqual([]);
+
+      const fallbackWarnings = warnSpy.mock.calls.filter((call) =>
+        call.some(
+          (entry) =>
+            typeof entry === "object" &&
+            entry &&
+            (entry as { event?: string }).event === "settings_load_fallback"
+        )
+      );
+      expect(fallbackWarnings).toHaveLength(1);
+      expect(runtimeErrors).toHaveLength(1);
+      expect(runtimeErrors[0]?.message).toContain(".claude/settings.json");
+
+      await runtime.terminate({ abort: true });
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("falls back when project settings.json is unreadable or invalid before query starts", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      sdkMockState.streams.push([
+        {
+          type: "assistant",
+          session_id: "settings-preflight-fallback-session",
+          message: { content: [{ type: "text", text: "fallback succeeded from preflight" }] }
+        },
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "settings-preflight-fallback-session",
+          usage: undefined,
+          modelUsage: {}
+        }
+      ]);
+
+      const rootDir = await createRuntimeRootDir();
+      const authFile = join(rootDir, "auth", "auth.json");
+      await mkdir(join(rootDir, ".claude"), { recursive: true });
+      await writeFile(join(rootDir, ".claude", "settings.json"), "{ invalid json }\n", "utf8");
+
+      setAuthCredential(authFile, "claude-agent-sdk", {
+        type: "oauth",
+        access: "claude-oauth-token",
+        refresh: "",
+        expires: String(Date.now() + 60_000)
+      } as unknown as AuthCredential);
+
+      const runtimeErrors: RuntimeErrorEvent[] = [];
+      const runtime = await ClaudeAgentSdkRuntime.create({
+        descriptor: createDescriptor(rootDir),
+        callbacks: {
+          onStatusChange: async () => {},
+          onRuntimeError: async (_agentId, error) => {
+            runtimeErrors.push(error);
+          }
+        },
+        systemPrompt: "You are a worker",
+        tools: [],
+        authFile
+      });
+
+      await runtime.sendMessage("trigger preflight settings fallback");
+      await waitFor(() => runtime.getPendingCount() === 0 && runtime.getStatus() === "idle");
+
+      // Primary attempt fails preflight before query() starts; fallback query runs once with defaults.
+      expect(sdkMockState.queryCalls).toHaveLength(1);
+      expect(sdkMockState.queryCalls[0]?.options?.settingSources).toEqual([]);
+      expect(runtimeErrors).toHaveLength(0);
+      expect(warnSpy).toHaveBeenCalled();
+
+      await runtime.terminate({ abort: true });
+      await chmod(join(rootDir, ".claude", "settings.json"), 0o644);
+    } finally {
+      warnSpy.mockRestore();
+    }
+  });
+
+  it("does not fallback for non-settings errors that mention CLAUDE.md or JSON", async () => {
+    sdkMockState.streams.push([
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        session_id: "non-settings-claude-md-session",
+        usage: undefined,
+        modelUsage: {},
+        errors: ["Failed to parse output JSON while summarizing CLAUDE.md section"]
+      }
+    ]);
+
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+    const runtimeErrors: RuntimeErrorEvent[] = [];
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor: createDescriptor(rootDir),
+      callbacks: {
+        onStatusChange: async () => {},
+        onRuntimeError: async (_agentId, error) => {
+          runtimeErrors.push(error);
+        }
+      },
+      systemPrompt: "You are a worker",
+      tools: [],
+      authFile
+    });
+
+    await runtime.sendMessage("trigger non-settings parse failure");
+    await waitFor(() => runtimeErrors.length > 0);
+
+    expect(sdkMockState.queryCalls).toHaveLength(1);
+    expect(sdkMockState.queryCalls[0]?.options?.settingSources).toEqual(["project"]);
+    expect(runtimeErrors[0]?.message).toContain("CLAUDE.md");
+
+    await runtime.terminate({ abort: true });
+  });
+
+  it("does not fallback for generic user settings file parse errors unrelated to Claude settings", async () => {
+    sdkMockState.streams.push([
+      {
+        type: "result",
+        subtype: "error_during_execution",
+        session_id: "non-settings-user-settings-session",
+        usage: undefined,
+        modelUsage: {},
+        errors: ["Failed to parse user settings file generated by tool output"]
+      }
+    ]);
+
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+    const runtimeErrors: RuntimeErrorEvent[] = [];
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor: createDescriptor(rootDir),
+      callbacks: {
+        onStatusChange: async () => {},
+        onRuntimeError: async (_agentId, error) => {
+          runtimeErrors.push(error);
+        }
+      },
+      systemPrompt: "You are a worker",
+      tools: [],
+      authFile
+    });
+
+    await runtime.sendMessage("trigger non-settings user-settings failure");
+    await waitFor(() => runtimeErrors.length > 0);
+
+    expect(sdkMockState.queryCalls).toHaveLength(1);
+    expect(sdkMockState.queryCalls[0]?.options?.settingSources).toEqual(["project"]);
+    expect(runtimeErrors[0]?.message).toContain("user settings file");
+
+    await runtime.terminate({ abort: true });
+  });
+
+  it("does not fallback when stopInFlight aborts before a settings failure is emitted", async () => {
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    try {
+      sdkMockState.streams.push([
+        {
+          __delay: 100
+        },
+        {
+          type: "result",
+          subtype: "error_during_execution",
+          session_id: "aborted-before-settings-error",
+          usage: undefined,
+          modelUsage: {},
+          errors: ["Failed to parse .claude/settings.json: Unexpected token } in JSON at position 1"]
+        }
+      ]);
+
+      const rootDir = await createRuntimeRootDir();
+      const authFile = join(rootDir, "auth", "auth.json");
+      const runtimeErrors: RuntimeErrorEvent[] = [];
+
+      setAuthCredential(authFile, "claude-agent-sdk", {
+        type: "oauth",
+        access: "claude-oauth-token",
+        refresh: "",
+        expires: String(Date.now() + 60_000)
+      } as unknown as AuthCredential);
+
+      const runtime = await ClaudeAgentSdkRuntime.create({
+        descriptor: createDescriptor(rootDir),
+        callbacks: {
+          onStatusChange: async () => {},
+          onRuntimeError: async (_agentId, error) => {
+            runtimeErrors.push(error);
+          }
+        },
+        systemPrompt: "You are a worker",
+        tools: [],
+        authFile
+      });
+
+      await runtime.sendMessage("abort before settings error arrives");
+      await waitFor(() => sdkMockState.queryCalls.length === 1);
+      await runtime.stopInFlight({ abort: true });
+      await waitFor(() => runtime.getStatus() === "idle" && runtime.getPendingCount() === 0);
+
+      expect(sdkMockState.queryCalls).toHaveLength(1);
+      expect(sdkMockState.queryCalls[0]?.options?.settingSources).toEqual(["project"]);
+      const fallbackWarnings = warnSpy.mock.calls.filter((call) =>
+        call.some(
+          (entry) =>
+            typeof entry === "object" &&
+            entry &&
+            (entry as { event?: string }).event === "settings_load_fallback"
+        )
+      );
+      expect(fallbackWarnings).toHaveLength(0);
+      expect(runtimeErrors.length).toBeLessThanOrEqual(1);
+      if (runtimeErrors.length === 1) {
+        expect(runtimeErrors[0]?.message).toContain("without returning a result");
+      }
+
+      await runtime.terminate({ abort: true });
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 });
