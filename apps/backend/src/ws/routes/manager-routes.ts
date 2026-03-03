@@ -41,7 +41,10 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
       const manager = await swarmManager.createManager(managerContextId, {
         name: command.name,
         cwd: command.cwd,
-        model: command.model
+        model: command.model,
+        provider: command.provider,
+        modelId: command.modelId,
+        thinkingLevel: command.thinkingLevel
       });
 
       broadcastToSubscribed({

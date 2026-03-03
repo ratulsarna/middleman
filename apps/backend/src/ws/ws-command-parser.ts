@@ -83,7 +83,11 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const name = (maybe as { name?: unknown }).name;
     const cwd = (maybe as { cwd?: unknown }).cwd;
     const model = (maybe as { model?: unknown }).model;
+    const provider = (maybe as { provider?: unknown }).provider;
+    const modelId = (maybe as { modelId?: unknown }).modelId;
+    const thinkingLevel = (maybe as { thinkingLevel?: unknown }).thinkingLevel;
     const requestId = (maybe as { requestId?: unknown }).requestId;
+    const hasExplicitDescriptorField = provider !== undefined || modelId !== undefined;
 
     if (typeof name !== "string" || name.trim().length === 0) {
       return { ok: false, error: "create_manager.name must be a non-empty string" };
@@ -97,9 +101,41 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         error: `create_manager.model must be one of ${describeSwarmModelPresets()}`
       };
     }
+    if (model !== undefined && hasExplicitDescriptorField) {
+      return {
+        ok: false,
+        error: "create_manager.model cannot be combined with create_manager.provider or create_manager.modelId"
+      };
+    }
+    if (hasExplicitDescriptorField && (provider === undefined || modelId === undefined)) {
+      return {
+        ok: false,
+        error: "create_manager.provider and create_manager.modelId are required together for explicit model creation"
+      };
+    }
+    if (thinkingLevel !== undefined && !hasExplicitDescriptorField) {
+      return {
+        ok: false,
+        error: "create_manager.thinkingLevel is only supported with create_manager.provider and create_manager.modelId"
+      };
+    }
+    if (provider !== undefined && (typeof provider !== "string" || provider.trim().length === 0)) {
+      return { ok: false, error: "create_manager.provider must be a non-empty string when provided" };
+    }
+    if (modelId !== undefined && (typeof modelId !== "string" || modelId.trim().length === 0)) {
+      return { ok: false, error: "create_manager.modelId must be a non-empty string when provided" };
+    }
+    if (thinkingLevel !== undefined && !isThinkingLevel(thinkingLevel)) {
+      return {
+        ok: false,
+        error: `create_manager.thinkingLevel must be one of ${describeThinkingLevels()}`
+      };
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return { ok: false, error: "create_manager.requestId must be a string when provided" };
     }
+
+    const normalizedThinkingLevel = thinkingLevel as ThinkingLevel | undefined;
 
     return {
       ok: true,
@@ -108,6 +144,9 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         name: name.trim(),
         cwd,
         model,
+        provider: typeof provider === "string" ? provider.trim() : undefined,
+        modelId: typeof modelId === "string" ? modelId.trim() : undefined,
+        thinkingLevel: normalizedThinkingLevel,
         requestId
       }
     };

@@ -548,7 +548,14 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   async createManager(
     callerAgentId: string,
-    input: { name: string; cwd: string; model?: SwarmModelPreset }
+    input: {
+      name: string;
+      cwd: string;
+      model?: SwarmModelPreset;
+      provider?: string;
+      modelId?: string;
+      thinkingLevel?: ThinkingLevel;
+    }
   ): Promise<AgentDescriptor> {
     const callerDescriptor = this.descriptors.get(callerAgentId);
     if (!callerDescriptor || callerDescriptor.role !== "manager") {
@@ -566,6 +573,51 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     const requestedModelPreset = parseSwarmModelPreset(input.model, "create_manager.model");
+    const requestedProvider = parseOptionalNonEmptyString(input.provider, "create_manager.provider");
+    const requestedModelId = parseOptionalNonEmptyString(input.modelId, "create_manager.modelId");
+    const requestedThinkingLevel = parseThinkingLevel(input.thinkingLevel, "create_manager.thinkingLevel");
+    const hasExplicitDescriptorField = input.provider !== undefined || input.modelId !== undefined;
+    const hasExplicitModelCreate = requestedProvider !== undefined || requestedModelId !== undefined;
+
+    if (requestedModelPreset && hasExplicitDescriptorField) {
+      throw new Error(
+        "create_manager.model cannot be combined with create_manager.provider or create_manager.modelId"
+      );
+    }
+    if (hasExplicitDescriptorField && !hasExplicitModelCreate) {
+      throw new Error(
+        "create_manager.provider and create_manager.modelId are required together for explicit model creation"
+      );
+    }
+    if (requestedThinkingLevel && !hasExplicitModelCreate) {
+      throw new Error(
+        "create_manager.thinkingLevel is only supported with create_manager.provider and create_manager.modelId"
+      );
+    }
+    if (hasExplicitModelCreate && (!requestedProvider || !requestedModelId)) {
+      throw new Error(
+        "create_manager.provider and create_manager.modelId are required together for explicit model creation"
+      );
+    }
+
+    let nextModel: AgentModelDescriptor;
+    if (requestedModelPreset) {
+      nextModel = resolveModelDescriptorFromPreset(requestedModelPreset, {
+        presetDefinitions: this.modelPresetDefinitions
+      });
+    } else if (hasExplicitModelCreate) {
+      nextModel = normalizeManagedModelDescriptor(
+        {
+          provider: requestedProvider!,
+          modelId: requestedModelId!,
+          thinkingLevel: requestedThinkingLevel
+        },
+        { presetDefinitions: this.modelPresetDefinitions }
+      );
+    } else {
+      nextModel = this.resolveDefaultModelDescriptor();
+    }
+
     const managerId = this.generateUniqueManagerId(requestedName);
     const createdAt = this.now();
     const cwd = await this.resolveAndValidateCwd(input.cwd);
@@ -580,11 +632,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       createdAt,
       updatedAt: createdAt,
       cwd,
-      model: requestedModelPreset
-        ? resolveModelDescriptorFromPreset(requestedModelPreset, {
-            presetDefinitions: this.modelPresetDefinitions
-          })
-        : this.resolveDefaultModelDescriptor(),
+      model: nextModel,
       sessionFile: join(this.config.paths.sessionsDir, `${managerId}.jsonl`)
     };
 

@@ -12,7 +12,16 @@ export type ClientCommand =
     }
   | { type: 'kill_agent'; agentId: string }
   | { type: 'stop_all_agents'; managerId: string; requestId?: string }
-  | { type: 'create_manager'; name: string; cwd: string; model?: ManagerModelPreset; requestId?: string }
+  | {
+      type: 'create_manager'
+      name: string
+      cwd: string
+      model?: ManagerModelPreset
+      provider?: string
+      modelId?: string
+      thinkingLevel?: ThinkingLevel
+      requestId?: string
+    }
   | { type: 'delete_manager'; managerId: string; requestId?: string }
   | {
       type: 'update_manager'
