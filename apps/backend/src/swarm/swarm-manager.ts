@@ -702,6 +702,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     await this.terminateDescriptor(target, { abort: true, emitStatus: true });
     this.descriptors.delete(targetManagerId);
     this.conversationProjector.deleteConversationHistory(targetManagerId);
+    this.clearCrossManagerRateLimitForManager(targetManagerId);
 
     await this.saveStore();
     this.emitAgentsSnapshot();
@@ -873,20 +874,21 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return Array.from(managerContextIds);
   }
 
-  private trackCrossManagerMessage(fromManagerId: string, toManagerId: string): void {
-    const pairKey = `${fromManagerId}->${toManagerId}`;
-    const now = Date.now();
-
-    let timestamps = this.crossManagerMessageLog.get(pairKey);
-    if (!timestamps) {
-      timestamps = [];
-      this.crossManagerMessageLog.set(pairKey, timestamps);
-    }
-
-    const cutoff = now - CROSS_MANAGER_RATE_WINDOW_MS;
+  private evictStaleCrossManagerTimestamps(timestamps: number[]): void {
+    const cutoff = Date.now() - CROSS_MANAGER_RATE_WINDOW_MS;
     while (timestamps.length > 0 && timestamps[0] < cutoff) {
       timestamps.shift();
     }
+  }
+
+  private checkCrossManagerRateLimit(fromManagerId: string, toManagerId: string): void {
+    const pairKey = `${fromManagerId}->${toManagerId}`;
+    const timestamps = this.crossManagerMessageLog.get(pairKey);
+    if (!timestamps) {
+      return;
+    }
+
+    this.evictStaleCrossManagerTimestamps(timestamps);
 
     if (timestamps.length >= CROSS_MANAGER_RATE_LIMIT) {
       throw new Error(
@@ -895,8 +897,24 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         `This may indicate a messaging loop.`
       );
     }
+  }
 
-    timestamps.push(now);
+  private recordCrossManagerMessage(fromManagerId: string, toManagerId: string): void {
+    const pairKey = `${fromManagerId}->${toManagerId}`;
+    let timestamps = this.crossManagerMessageLog.get(pairKey);
+    if (!timestamps) {
+      timestamps = [];
+      this.crossManagerMessageLog.set(pairKey, timestamps);
+    }
+    timestamps.push(Date.now());
+  }
+
+  private clearCrossManagerRateLimitForManager(managerId: string): void {
+    for (const key of this.crossManagerMessageLog.keys()) {
+      if (key.startsWith(`${managerId}->`) || key.endsWith(`->${managerId}`)) {
+        this.crossManagerMessageLog.delete(key);
+      }
+    }
   }
 
   async sendMessage(
@@ -929,8 +947,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Manager ${sender.agentId} does not own worker ${targetAgentId}`);
     }
 
-    if (sender.role === "manager" && target.role === "manager" && sender.agentId !== target.agentId) {
-      this.trackCrossManagerMessage(sender.agentId, targetAgentId);
+    const isCrossManager = sender.role === "manager" && target.role === "manager" && sender.agentId !== target.agentId;
+    if (isCrossManager) {
+      this.checkCrossManagerRateLimit(sender.agentId, targetAgentId);
     }
 
     const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
@@ -948,6 +967,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       origin
     );
     const receipt = await runtime.sendMessage(modelMessage, requestedDelivery);
+
+    if (isCrossManager) {
+      this.recordCrossManagerMessage(sender.agentId, targetAgentId);
+    }
 
     this.logDebug("agent:send_message", {
       fromAgentId,
