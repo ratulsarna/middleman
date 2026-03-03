@@ -35,6 +35,7 @@ import { useFileDrop } from '@/hooks/index-page/use-file-drop'
 import type {
   ConversationAttachment,
 } from '@nexus/protocol'
+import type { UpdateManagerInput, UpdateManagerResult } from '@/lib/ws-client'
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
@@ -315,6 +316,18 @@ export function IndexPage() {
     navigateToRoute({ view: 'settings' })
   }
 
+  const handleUpdateManager = useCallback(
+    async (input: UpdateManagerInput): Promise<UpdateManagerResult> => {
+      const client = clientRef.current
+      if (!client) {
+        throw new Error('WebSocket is disconnected. Reconnecting...')
+      }
+
+      return client.updateManager(input)
+    },
+    [clientRef],
+  )
+
   const handleSuggestionClick = (prompt: string) => {
     messageInputRef.current?.setInput(prompt)
   }
@@ -367,6 +380,7 @@ export function IndexPage() {
                 managers={state.agents.filter((agent) => agent.role === 'manager')}
                 slackStatus={state.slackStatus}
                 telegramStatus={state.telegramStatus}
+                onUpdateManager={handleUpdateManager}
                 onBack={() =>
                   navigateToRoute({
                     view: 'chat',

@@ -36,10 +36,24 @@ export interface DirectoryValidationResult {
   message: string | null
 }
 
+export interface UpdateManagerInput {
+  managerId: string
+  provider?: string
+  modelId?: string
+  thinkingLevel?: ThinkingLevel
+  promptOverride?: string
+}
+
+export interface UpdateManagerResult {
+  manager: AgentDescriptor
+  resetApplied: boolean
+}
+
 type Listener = (state: ManagerWsState) => void
 
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
+  update_manager: UpdateManagerResult
   delete_manager: { managerId: string }
   stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
   list_directories: DirectoriesListedResult
@@ -50,6 +64,7 @@ type WsRequestResultMap = {
 type WsRequestType = Extract<keyof WsRequestResultMap, string>
 const WS_REQUEST_TYPES: WsRequestType[] = [
   'create_manager',
+  'update_manager',
   'delete_manager',
   'stop_all_agents',
   'list_directories',
@@ -59,6 +74,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
 
 const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: string }> = [
   { requestType: 'create_manager', codeFragment: 'create_manager' },
+  { requestType: 'update_manager', codeFragment: 'update_manager' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
@@ -291,6 +307,46 @@ export class ManagerWsClient {
       }))
   }
 
+  async updateManager(input: UpdateManagerInput): Promise<UpdateManagerResult> {
+    const managerId = input.managerId.trim()
+    const provider = input.provider?.trim()
+    const modelId = input.modelId?.trim()
+    const thinkingLevel = input.thinkingLevel
+    const promptOverride = input.promptOverride
+
+    if (!managerId) {
+      throw new Error('Manager id is required.')
+    }
+
+    const hasDescriptorField = provider !== undefined || modelId !== undefined
+    if (hasDescriptorField && (!provider || !modelId)) {
+      throw new Error('Manager provider and model are required together.')
+    }
+
+    if (
+      provider === undefined &&
+      modelId === undefined &&
+      thinkingLevel === undefined &&
+      promptOverride === undefined
+    ) {
+      throw new Error('At least one manager setting must be provided.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('update_manager', (requestId) => ({
+      type: 'update_manager',
+      managerId,
+      provider,
+      modelId,
+      thinkingLevel,
+      promptOverride,
+      requestId,
+    }))
+  }
+
   async deleteManager(managerId: string): Promise<{ managerId: string }> {
     const trimmed = managerId.trim()
     if (!trimmed) {
@@ -504,6 +560,15 @@ export class ManagerWsClient {
         break
       }
 
+      case 'manager_updated': {
+        this.applyManagerUpdated(event.manager)
+        this.requestTracker.resolve('update_manager', event.requestId, {
+          manager: event.manager,
+          resetApplied: event.resetApplied,
+        })
+        break
+      }
+
       case 'manager_deleted': {
         this.applyManagerDeleted(event.managerId)
         this.requestTracker.resolve('delete_manager', event.requestId, {
@@ -628,6 +693,16 @@ export class ManagerWsClient {
     const nextAgents = this.state.agents.filter(
       (agent) => agent.agentId !== managerId && agent.managerId !== managerId,
     )
+    this.applyAgentsSnapshot(nextAgents)
+  }
+
+  private applyManagerUpdated(manager: AgentDescriptor): void {
+    const managerExists = this.state.agents.some((agent) => agent.agentId === manager.agentId)
+    const nextAgents = managerExists
+      ? this.state.agents.map((agent) =>
+          agent.agentId === manager.agentId ? manager : agent,
+        )
+      : [...this.state.agents, manager]
     this.applyAgentsSnapshot(nextAgents)
   }
 

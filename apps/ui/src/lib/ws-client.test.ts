@@ -811,6 +811,110 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('sends update_manager with explicit fields and resolves manager_updated metadata', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'medium',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    const updatePromise = client.updateManager({
+      managerId: 'manager',
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4-5',
+      thinkingLevel: 'high',
+      promptOverride: 'You are a release manager.',
+    })
+
+    const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(updatePayload).toMatchObject({
+      type: 'update_manager',
+      managerId: 'manager',
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4-5',
+      thinkingLevel: 'high',
+      promptOverride: 'You are a release manager.',
+    })
+    expect(updatePayload.model).toBeUndefined()
+    expect(typeof updatePayload.requestId).toBe('string')
+
+    emitServerEvent(socket, {
+      type: 'manager_updated',
+      requestId: updatePayload.requestId,
+      resetApplied: true,
+      manager: {
+        agentId: 'manager',
+        managerId: 'manager',
+        displayName: 'Manager',
+        role: 'manager',
+        status: 'idle',
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:10.000Z',
+        cwd: '/tmp',
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-sonnet-4-5',
+          thinkingLevel: 'high',
+        },
+        promptOverride: 'You are a release manager.',
+        sessionFile: '/tmp/manager.jsonl',
+      },
+    })
+
+    await expect(updatePromise).resolves.toEqual({
+      manager: expect.objectContaining({
+        agentId: 'manager',
+        model: {
+          provider: 'anthropic',
+          modelId: 'claude-sonnet-4-5',
+          thinkingLevel: 'high',
+        },
+        promptOverride: 'You are a release manager.',
+      }),
+      resetApplied: true,
+    })
+
+    const updatedManager = client.getState().agents.find((agent) => agent.agentId === 'manager')
+    expect(updatedManager?.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4-5',
+      thinkingLevel: 'high',
+    })
+    expect(updatedManager?.promptOverride).toBe('You are a release manager.')
+
+    client.destroy()
+  })
+
   it('sends directory picker commands and resolves response events', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 

@@ -6,6 +6,7 @@ import type { AgentDescriptor } from '@nexus/protocol'
 import { SettingsGeneral } from './SettingsGeneral'
 import * as settingsApi from './settings-api'
 import type { ClaudeOutputStyleState } from './settings-types'
+import type { UpdateManagerInput, UpdateManagerResult } from '@/lib/ws-client'
 
 vi.mock('./settings-api', async () => {
   const actual = await vi.importActual<typeof import('./settings-api')>('./settings-api')
@@ -50,6 +51,39 @@ function createClaudeManager(agentId: string, displayName: string): AgentDescrip
     },
     sessionFile: `/tmp/${agentId}.jsonl`,
   }
+}
+
+function createManager(
+  agentId: string,
+  displayName: string,
+  model: AgentDescriptor['model'],
+  promptOverride?: string,
+): AgentDescriptor {
+  const now = '2026-01-01T00:00:00.000Z'
+  return {
+    agentId,
+    managerId: agentId,
+    displayName,
+    role: 'manager',
+    status: 'idle',
+    createdAt: now,
+    updatedAt: now,
+    cwd: `/tmp/${agentId}`,
+    model,
+    promptOverride,
+    sessionFile: `/tmp/${agentId}.jsonl`,
+  }
+}
+
+function createUpdateManagerMock(
+  implementation?: (input: UpdateManagerInput) => Promise<UpdateManagerResult>,
+) {
+  return vi.fn(
+    implementation ??
+      (async () => {
+        throw new Error('Unexpected manager update call in test.')
+      }),
+  )
 }
 
 describe('SettingsGeneral', () => {
@@ -99,7 +133,13 @@ describe('SettingsGeneral', () => {
       throw new Error(`Unexpected manager id: ${managerId}`)
     })
 
-    const { rerender } = render(<SettingsGeneral wsUrl="ws://127.0.0.1:47187" managers={[managerA, managerB]} />)
+    const { rerender } = render(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[managerA, managerB]}
+        onUpdateManager={createUpdateManagerMock()}
+      />,
+    )
 
     await waitFor(() => {
       expect(vi.mocked(settingsApi.fetchClaudeOutputStyle)).toHaveBeenCalledWith(
@@ -108,7 +148,13 @@ describe('SettingsGeneral', () => {
       )
     })
 
-    rerender(<SettingsGeneral wsUrl="ws://127.0.0.1:47187" managers={[managerB]} />)
+    rerender(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[managerB]}
+        onUpdateManager={createUpdateManagerMock()}
+      />,
+    )
 
     await waitFor(() => {
       expect(vi.mocked(settingsApi.fetchClaudeOutputStyle)).toHaveBeenCalledWith(
@@ -162,7 +208,13 @@ describe('SettingsGeneral', () => {
       return saveDeferred.promise
     })
 
-    render(<SettingsGeneral wsUrl="ws://127.0.0.1:47187" managers={[managerA, managerB]} />)
+    render(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[managerA, managerB]}
+        onUpdateManager={createUpdateManagerMock()}
+      />,
+    )
 
     await waitFor(() => {
       expect(vi.mocked(settingsApi.fetchClaudeOutputStyle)).toHaveBeenCalledWith(
@@ -176,9 +228,8 @@ describe('SettingsGeneral', () => {
       expect((refreshButton as HTMLButtonElement).disabled).toBe(false)
     })
 
-    const allComboboxes = screen.getAllByRole('combobox')
-    const managerSelect = allComboboxes[1]
-    const outputStyleSelect = allComboboxes[2]
+    const managerSelect = screen.getByRole('combobox', { name: 'Claude manager' })
+    const outputStyleSelect = screen.getByRole('combobox', { name: 'Claude output style' })
     fireEvent.click(outputStyleSelect)
     fireEvent.click(await screen.findByRole('option', { name: 'concise' }))
 
@@ -218,5 +269,191 @@ describe('SettingsGeneral', () => {
     await waitFor(() => {
       expect((refreshButton as HTMLButtonElement).disabled).toBe(false)
     })
+  })
+
+  it('saves manager runtime settings with explicit descriptor fields and no-reset feedback', async () => {
+    const manager = createManager(
+      'manager-a',
+      'Manager A',
+      {
+        provider: 'openai-codex',
+        modelId: 'gpt-5.3-codex',
+        thinkingLevel: 'high',
+      },
+      'Current override',
+    )
+
+    const onUpdateManager = createUpdateManagerMock(async () => ({
+      manager: {
+        ...manager,
+        promptOverride: 'Current override',
+      },
+      resetApplied: false,
+    }))
+
+    render(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[manager]}
+        onUpdateManager={onUpdateManager}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save manager settings' }))
+
+    await waitFor(() => {
+      expect(onUpdateManager).toHaveBeenCalledTimes(1)
+    })
+
+    expect(onUpdateManager).toHaveBeenCalledWith({
+      managerId: 'manager-a',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'high',
+    })
+
+    expect(
+      screen.getByText('Manager settings saved. No runtime reset was needed.'),
+    ).toBeTruthy()
+  })
+
+  it('preserves runtime save feedback after same-manager props refresh', async () => {
+    const manager = createManager(
+      'manager-a',
+      'Manager A',
+      {
+        provider: 'openai-codex',
+        modelId: 'gpt-5.3-codex',
+        thinkingLevel: 'high',
+      },
+      'Current override',
+    )
+    const updatedManager: AgentDescriptor = {
+      ...manager,
+      updatedAt: '2026-01-01T00:00:01.000Z',
+    }
+
+    const onUpdateManager = createUpdateManagerMock(async () => ({
+      manager: updatedManager,
+      resetApplied: true,
+    }))
+
+    const { rerender } = render(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[manager]}
+        onUpdateManager={onUpdateManager}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save manager settings' }))
+
+    await waitFor(() => {
+      expect(onUpdateManager).toHaveBeenCalledTimes(1)
+    })
+
+    await screen.findByText('Manager settings saved. Runtime was reset.')
+
+    rerender(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[
+          {
+            ...updatedManager,
+            updatedAt: '2026-01-01T00:00:02.000Z',
+          },
+        ]}
+        onUpdateManager={onUpdateManager}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Manager settings saved. Runtime was reset.')).toBeTruthy()
+    })
+  })
+
+  it('preserves no-reset runtime save feedback after same-manager props refresh', async () => {
+    const manager = createManager(
+      'manager-a',
+      'Manager A',
+      {
+        provider: 'openai-codex',
+        modelId: 'gpt-5.3-codex',
+        thinkingLevel: 'high',
+      },
+      'Current override',
+    )
+    const updatedManager: AgentDescriptor = {
+      ...manager,
+      updatedAt: '2026-01-01T00:00:01.000Z',
+    }
+
+    const onUpdateManager = createUpdateManagerMock(async () => ({
+      manager: updatedManager,
+      resetApplied: false,
+    }))
+
+    const { rerender } = render(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[manager]}
+        onUpdateManager={onUpdateManager}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save manager settings' }))
+
+    await waitFor(() => {
+      expect(onUpdateManager).toHaveBeenCalledTimes(1)
+    })
+
+    await screen.findByText('Manager settings saved. No runtime reset was needed.')
+
+    rerender(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[
+          {
+            ...updatedManager,
+            updatedAt: '2026-01-01T00:00:02.000Z',
+          },
+        ]}
+        onUpdateManager={onUpdateManager}
+      />,
+    )
+
+    await waitFor(() => {
+      expect(screen.getByText('Manager settings saved. No runtime reset was needed.')).toBeTruthy()
+    })
+  })
+
+  it('blocks manager runtime save when selected descriptor is unsupported', async () => {
+    const unsupportedManager = createManager(
+      'manager-unsupported',
+      'Unsupported Manager',
+      {
+        provider: 'custom-provider',
+        modelId: 'custom-model',
+        thinkingLevel: 'medium',
+      },
+    )
+    const onUpdateManager = createUpdateManagerMock()
+
+    render(
+      <SettingsGeneral
+        wsUrl="ws://127.0.0.1:47187"
+        managers={[unsupportedManager]}
+        onUpdateManager={onUpdateManager}
+      />,
+    )
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save manager settings' }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Current model is unsupported in this editor. Choose a supported model to save.'),
+      ).toBeTruthy()
+    })
+    expect(onUpdateManager).not.toHaveBeenCalled()
   })
 })
