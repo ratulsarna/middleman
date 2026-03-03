@@ -2398,6 +2398,97 @@ describe('SwarmManager', () => {
     })
   })
 
+  it('creates managers from explicit provider/modelId create_manager payloads', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const created = await manager.createManager('manager', {
+      name: 'Explicit Manager',
+      cwd: config.defaultCwd,
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4-5',
+      thinkingLevel: 'high',
+    })
+
+    expect(created.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-sonnet-4-5',
+      thinkingLevel: 'high',
+    })
+  })
+
+  it('rejects create_manager payloads that mix preset and explicit model descriptor fields', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.createManager('manager', {
+        name: 'Invalid Mixed Manager',
+        cwd: config.defaultCwd,
+        model: 'pi-codex',
+        provider: 'anthropic',
+        modelId: 'claude-opus-4-6',
+      }),
+    ).rejects.toThrow(
+      'create_manager.model cannot be combined with create_manager.provider or create_manager.modelId',
+    )
+  })
+
+  it('rejects create_manager payloads that provide only provider or modelId in explicit mode', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.createManager('manager', {
+        name: 'Missing Model Id',
+        cwd: config.defaultCwd,
+        provider: 'anthropic',
+      }),
+    ).rejects.toThrow(
+      'create_manager.provider and create_manager.modelId are required together for explicit model creation',
+    )
+
+    await expect(
+      manager.createManager('manager', {
+        name: 'Missing Provider',
+        cwd: config.defaultCwd,
+        modelId: 'claude-opus-4-6',
+      }),
+    ).rejects.toThrow(
+      'create_manager.provider and create_manager.modelId are required together for explicit model creation',
+    )
+  })
+
+  it('rejects create_manager thinkingLevel when explicit provider/modelId are not provided', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.createManager('manager', {
+        name: 'Thinking Without Explicit Descriptor',
+        cwd: config.defaultCwd,
+        thinkingLevel: 'low',
+      }),
+    ).rejects.toThrow(
+      'create_manager.thinkingLevel is only supported with create_manager.provider and create_manager.modelId',
+    )
+
+    await expect(
+      manager.createManager('manager', {
+        name: 'Preset With Thinking',
+        cwd: config.defaultCwd,
+        model: 'pi-opus',
+        thinkingLevel: 'low',
+      }),
+    ).rejects.toThrow(
+      'create_manager.thinkingLevel is only supported with create_manager.provider and create_manager.modelId',
+    )
+  })
+
   it('rejects invalid create_manager model presets with a clear error', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)

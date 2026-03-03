@@ -1667,6 +1667,58 @@ describe('SwarmWebSocketServer', () => {
     await server.stop()
   })
 
+  it('creates managers over websocket with explicit provider/modelId payloads', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+    await waitForEvent(events, (event) => event.type === 'ready')
+
+    client.send(
+      JSON.stringify({
+        type: 'create_manager',
+        name: 'Explicit Manager',
+        cwd: config.defaultCwd,
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-5',
+        thinkingLevel: 'high',
+      }),
+    )
+
+    const createdEvent = await waitForEvent(events, (event) => event.type === 'manager_created')
+    expect(createdEvent.type).toBe('manager_created')
+    if (createdEvent.type === 'manager_created') {
+      expect(createdEvent.manager.model).toEqual({
+        provider: 'anthropic',
+        modelId: 'claude-sonnet-4-5',
+        thinkingLevel: 'high',
+      })
+    }
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
   it('rejects invalid create_manager model presets at websocket protocol validation time', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)
@@ -1711,6 +1763,110 @@ describe('SwarmWebSocketServer', () => {
     )
 
     expect(errorEvent.type).toBe('error')
+
+    client.close()
+    await once(client, 'close')
+    await server.stop()
+  })
+
+  it('rejects mixed and partial explicit create_manager payloads at websocket protocol validation time', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+
+    await server.start()
+
+    const client = new WebSocket(`ws://${config.host}:${config.port}`)
+    const events: ServerEvent[] = []
+    client.on('message', (raw) => {
+      events.push(JSON.parse(raw.toString()) as ServerEvent)
+    })
+
+    await once(client, 'open')
+    client.send(JSON.stringify({ type: 'subscribe' }))
+    await waitForEvent(events, (event) => event.type === 'ready')
+
+    const expectInvalidCreateManager = async (
+      payload: Record<string, unknown>,
+      expectedMessageFragment: string,
+    ): Promise<void> => {
+      // Reset buffered events so each assertion is causally tied to one command.
+      events.length = 0
+      client.send(
+        JSON.stringify({
+          type: 'create_manager',
+          ...payload,
+        }),
+      )
+      const errorEvent = await waitForEvent(
+        events,
+        (event) =>
+          event.type === 'error' &&
+          event.code === 'INVALID_COMMAND' &&
+          event.message.includes(expectedMessageFragment),
+      )
+
+      expect(errorEvent.type).toBe('error')
+    }
+
+    await expectInvalidCreateManager(
+      {
+        name: 'Mixed Manager',
+        cwd: config.defaultCwd,
+        model: 'pi-opus',
+        provider: 'anthropic',
+        modelId: 'claude-opus-4-6',
+      },
+      'create_manager.model cannot be combined with create_manager.provider or create_manager.modelId',
+    )
+
+    await expectInvalidCreateManager(
+      {
+        name: 'Partial Explicit Manager',
+        cwd: config.defaultCwd,
+        provider: 'anthropic',
+      },
+      'create_manager.provider and create_manager.modelId are required together for explicit model creation',
+    )
+
+    await expectInvalidCreateManager(
+      {
+        name: 'Thinking Without Explicit Descriptor',
+        cwd: config.defaultCwd,
+        thinkingLevel: 'low',
+      },
+      'create_manager.thinkingLevel is only supported with create_manager.provider and create_manager.modelId',
+    )
+
+    await expectInvalidCreateManager(
+      {
+        name: 'Preset With Thinking',
+        cwd: config.defaultCwd,
+        model: 'pi-opus',
+        thinkingLevel: 'low',
+      },
+      'create_manager.thinkingLevel is only supported with create_manager.provider and create_manager.modelId',
+    )
+
+    await expectInvalidCreateManager(
+      {
+        name: 'Explicit With Invalid Thinking',
+        cwd: config.defaultCwd,
+        provider: 'anthropic',
+        modelId: 'claude-opus-4-6',
+        thinkingLevel: 'ultra',
+      },
+      'create_manager.thinkingLevel must be one of off|minimal|low|medium|high|xhigh',
+    )
 
     client.close()
     await once(client, 'close')
