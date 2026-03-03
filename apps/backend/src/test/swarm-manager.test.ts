@@ -2657,4 +2657,193 @@ describe('SwarmManager', () => {
     expect(listed.resolvedPath).toBe(validation.resolvedPath)
     expect(listed.roots).toEqual([])
   })
+
+  describe('cross-manager messaging', () => {
+    it('delivers a message from one manager to another', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'Peer Manager',
+        cwd: config.defaultCwd,
+      })
+
+      const receipt = await manager.sendMessage(primary.agentId, secondary.agentId, 'hello peer')
+
+      expect(receipt.targetAgentId).toBe(secondary.agentId)
+      expect(receipt.deliveryId).toBeDefined()
+
+      const secondaryRuntime = manager.runtimeByAgentId.get(secondary.agentId)
+      expect(secondaryRuntime?.sendCalls.length).toBeGreaterThanOrEqual(1)
+      const lastCall = secondaryRuntime?.sendCalls.at(-1)
+      expect(typeof lastCall?.message === 'string' ? lastCall.message : '').toContain('hello peer')
+    })
+
+    it('records the message in both managers conversation histories', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'History Manager',
+        cwd: config.defaultCwd,
+      })
+
+      await manager.sendMessage(primary.agentId, secondary.agentId, 'coordination msg')
+
+      const primaryHistory = manager.getConversationHistory(primary.agentId)
+      const secondaryHistory = manager.getConversationHistory(secondary.agentId)
+
+      const primaryEvent = primaryHistory.find(
+        (entry) => entry.type === 'agent_message' && 'fromAgentId' in entry && entry.fromAgentId === primary.agentId,
+      )
+      const secondaryEvent = secondaryHistory.find(
+        (entry) => entry.type === 'agent_message' && 'fromAgentId' in entry && entry.fromAgentId === primary.agentId,
+      )
+
+      expect(primaryEvent).toBeDefined()
+      expect(secondaryEvent).toBeDefined()
+      expect(primaryEvent?.type).toBe('agent_message')
+      expect(secondaryEvent?.type).toBe('agent_message')
+    })
+
+    it('produces a single history entry for self-messages', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      await manager.sendMessage(primary.agentId, primary.agentId, 'note to self')
+
+      const history = manager.getConversationHistory(primary.agentId)
+      const selfEvents = history.filter(
+        (entry) =>
+          entry.type === 'agent_message' &&
+          'fromAgentId' in entry &&
+          entry.fromAgentId === primary.agentId &&
+          'toAgentId' in entry &&
+          entry.toAgentId === primary.agentId,
+      )
+
+      // Self-messages: fromAgentId === targetAgentId, so the condition `fromAgentId !== targetAgentId` in
+      // sendMessage() skips agent_message emission entirely. Runtime still receives the message.
+      expect(selfEvents).toHaveLength(0)
+
+      const runtime = manager.runtimeByAgentId.get(primary.agentId)
+      expect(runtime?.sendCalls.length).toBeGreaterThanOrEqual(1)
+    })
+
+    it('rejects empty messages', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'Empty Msg Manager',
+        cwd: config.defaultCwd,
+      })
+
+      await expect(manager.sendMessage(primary.agentId, secondary.agentId, '')).rejects.toThrow(
+        'Message text cannot be empty',
+      )
+      await expect(manager.sendMessage(primary.agentId, secondary.agentId, '   ')).rejects.toThrow(
+        'Message text cannot be empty',
+      )
+    })
+
+    it('rejects messages to a non-running manager', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'Stopped Manager',
+        cwd: config.defaultCwd,
+      })
+
+      await manager.deleteManager(primary.agentId, secondary.agentId)
+
+      await expect(manager.sendMessage(primary.agentId, secondary.agentId, 'hello')).rejects.toThrow(
+        /Target agent is not running|Unknown target agent/,
+      )
+    })
+
+    it('enforces cross-manager rate limit on rapid messages', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'Rate Limit Manager',
+        cwd: config.defaultCwd,
+      })
+
+      for (let i = 0; i < 20; i++) {
+        await manager.sendMessage(primary.agentId, secondary.agentId, `msg-${i}`)
+      }
+
+      await expect(manager.sendMessage(primary.agentId, secondary.agentId, 'msg-overflow')).rejects.toThrow(
+        'Cross-manager message rate limit exceeded',
+      )
+    })
+
+    it('tracks rate limit per directed pair independently', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'Bidirectional Manager',
+        cwd: config.defaultCwd,
+      })
+
+      for (let i = 0; i < 15; i++) {
+        await manager.sendMessage(primary.agentId, secondary.agentId, `a-to-b-${i}`)
+      }
+      for (let i = 0; i < 15; i++) {
+        await manager.sendMessage(secondary.agentId, primary.agentId, `b-to-a-${i}`)
+      }
+
+      // Both directions stay under the 20-per-pair limit, so all 30 should succeed
+      const secondaryRuntime = manager.runtimeByAgentId.get(secondary.agentId)
+      const primaryRuntime = manager.runtimeByAgentId.get(primary.agentId)
+      expect(secondaryRuntime?.sendCalls.length).toBeGreaterThanOrEqual(15)
+      expect(primaryRuntime?.sendCalls.length).toBeGreaterThanOrEqual(15)
+    })
+
+    it('still blocks manager from messaging a foreign worker', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'Foreign Owner',
+        cwd: config.defaultCwd,
+      })
+      const worker = await manager.spawnAgent(secondary.agentId, { agentId: 'Foreign Worker' })
+
+      await expect(manager.sendMessage(primary.agentId, worker.agentId, 'cross-boundary')).rejects.toThrow(
+        `Manager ${primary.agentId} does not own worker ${worker.agentId}`,
+      )
+    })
+
+    it('delivers cross-manager message with SYSTEM prefix', async () => {
+      const config = await makeTempConfig()
+      const manager = new TestSwarmManager(config)
+      const primary = await bootWithDefaultManager(manager, config)
+
+      const secondary = await manager.createManager(primary.agentId, {
+        name: 'Prefix Manager',
+        cwd: config.defaultCwd,
+      })
+
+      await manager.sendMessage(primary.agentId, secondary.agentId, 'coordination request')
+
+      const secondaryRuntime = manager.runtimeByAgentId.get(secondary.agentId)
+      const lastCall = secondaryRuntime?.sendCalls.at(-1)
+      const messageText = typeof lastCall?.message === 'string' ? lastCall.message : ''
+      expect(messageText).toContain('SYSTEM')
+      expect(messageText).toContain('coordination request')
+    })
+  })
 })

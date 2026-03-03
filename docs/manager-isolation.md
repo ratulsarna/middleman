@@ -32,6 +32,14 @@ Conventions used below:
 | Per-manager Telegram profile | `dataDir/integrations/managers/<managerId>/telegram.json` | `integrations/registry.ts` + `integrations/telegram/telegram-config.ts` + `TelegramIntegrationService` | Scoped per manager by directory and profile ID (`telegram:<managerId>`). |
 | Manager-targeted API views (schedules/integrations) | `/api/managers/:managerId/schedules`, `/api/managers/:managerId/integrations/slack`, `/api/managers/:managerId/integrations/telegram` | Route resolution and manager existence checks in `ws/server.ts` | Request surface is manager-scoped when using manager-specific endpoints. |
 
+## 1.5) Cross-Manager Communication
+
+| Resource | Mechanism | Isolation reality |
+| --- | --- | --- |
+| Manager-to-manager messaging | `send_message_to_agent` tool via `SwarmManager.sendMessage()` | Managers can send text messages to other managers. Messages are delivered to the target manager's runtime as SYSTEM:-prefixed internal messages. Both the sender's and receiver's conversation histories record the message. A sliding-window rate limiter (20 messages per directed pair per 60-second window) prevents infinite loops. |
+| Manager-to-foreign-worker messaging | `SwarmManager.sendMessage()` guard | Still blocked. Managers can only message their own workers. Cross-domain work requires manager-to-manager coordination. |
+| Worker control (spawn/kill) | `SwarmManager.spawnAgent()` / `SwarmManager.killAgent()` guards | Unchanged. Managers can only spawn/kill their own workers. Cross-manager spawn/kill is not permitted. |
+
 ## 2) Shared (Global)
 
 | Resource | Data location | Managed by | Isolation reality |

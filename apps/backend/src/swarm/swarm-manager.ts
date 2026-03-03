@@ -102,6 +102,8 @@ const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 const MANAGER_ARCHETYPE_ID = "manager";
 const MERGER_ARCHETYPE_ID = "merger";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
+const CROSS_MANAGER_RATE_WINDOW_MS = 60_000;
+const CROSS_MANAGER_RATE_LIMIT = 20;
 const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this user.
 
 Send a warm welcome via speak_to_user and explain that you orchestrate worker agents to get work done quickly and safely.
@@ -225,6 +227,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly descriptors = new Map<string, AgentDescriptor>();
   private readonly runtimes = new Map<string, SwarmAgentRuntime>();
   private readonly conversationEntriesByAgentId = new Map<string, ConversationEntryEvent[]>();
+  private readonly crossManagerMessageLog = new Map<string, number[]>();
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
@@ -870,6 +873,32 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return Array.from(managerContextIds);
   }
 
+  private trackCrossManagerMessage(fromManagerId: string, toManagerId: string): void {
+    const pairKey = `${fromManagerId}->${toManagerId}`;
+    const now = Date.now();
+
+    let timestamps = this.crossManagerMessageLog.get(pairKey);
+    if (!timestamps) {
+      timestamps = [];
+      this.crossManagerMessageLog.set(pairKey, timestamps);
+    }
+
+    const cutoff = now - CROSS_MANAGER_RATE_WINDOW_MS;
+    while (timestamps.length > 0 && timestamps[0] < cutoff) {
+      timestamps.shift();
+    }
+
+    if (timestamps.length >= CROSS_MANAGER_RATE_LIMIT) {
+      throw new Error(
+        `Cross-manager message rate limit exceeded: ${fromManagerId} -> ${toManagerId} ` +
+        `(${CROSS_MANAGER_RATE_LIMIT} messages per ${CROSS_MANAGER_RATE_WINDOW_MS / 1000}s window). ` +
+        `This may indicate a messaging loop.`
+      );
+    }
+
+    timestamps.push(now);
+  }
+
   async sendMessage(
     fromAgentId: string,
     targetAgentId: string,
@@ -877,6 +906,11 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     delivery: RequestedDeliveryMode = "auto",
     options?: { origin?: "user" | "internal"; attachments?: ConversationAttachment[] }
   ): Promise<SendMessageReceipt> {
+    const hasAttachments = (options?.attachments?.length ?? 0) > 0;
+    if ((!message || message.trim().length === 0) && !hasAttachments) {
+      throw new Error("Message text cannot be empty");
+    }
+
     const sender = this.descriptors.get(fromAgentId);
     if (!sender || isNonRunningAgentStatus(sender.status)) {
       throw new Error(`Unknown or unavailable sender agent: ${fromAgentId}`);
@@ -890,8 +924,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Target agent is not running: ${targetAgentId}`);
     }
 
+    // Guard: managers may only message their own workers, but may freely message other managers.
     if (sender.role === "manager" && target.role === "worker" && target.managerId !== sender.agentId) {
       throw new Error(`Manager ${sender.agentId} does not own worker ${targetAgentId}`);
+    }
+
+    if (sender.role === "manager" && target.role === "manager" && sender.agentId !== target.agentId) {
+      this.trackCrossManagerMessage(sender.agentId, targetAgentId);
     }
 
     const managerContextIds = this.resolveActivityManagerContextIds(sender, target);
