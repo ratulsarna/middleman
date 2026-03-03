@@ -104,6 +104,36 @@ describe('classifyToolCall', () => {
       callable: true,
       category: 'mcp',
     })
+
+    expect(
+      classifyToolCall('attach', {
+        entryType: 'agent_tool_call',
+        eventKind: 'tool_execution_start',
+      }),
+    ).toMatchObject({
+      callable: true,
+      category: 'file',
+    })
+
+    expect(
+      classifyToolCall('artifacts', {
+        entryType: 'agent_tool_call',
+        eventKind: 'tool_execution_start',
+      }),
+    ).toMatchObject({
+      callable: true,
+      category: 'file',
+    })
+
+    expect(
+      classifyToolCall('extract_document', {
+        entryType: 'agent_tool_call',
+        eventKind: 'tool_execution_start',
+      }),
+    ).toMatchObject({
+      callable: true,
+      category: 'file',
+    })
   })
 
   it('classifies known non-callable labels as excluded', () => {
@@ -175,5 +205,18 @@ describe('classifyToolCall', () => {
       displayKind: 'callable-unknown',
     })
     expect(second).toEqual(first)
+  })
+
+  it('keeps javascript_repl on callable unknown fallback for PI compatibility', () => {
+    expect(
+      classifyToolCall('javascript_repl', {
+        entryType: 'agent_tool_call',
+        eventKind: 'tool_execution_start',
+      }),
+    ).toMatchObject({
+      callable: true,
+      category: 'unknown',
+      displayKind: 'callable-unknown',
+    })
   })
 })

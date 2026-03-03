@@ -48,6 +48,9 @@ const CALLABLE_EXACT_CATEGORY = new Map<string, ToolCallCategory>([
   ['read_file', 'file'],
   ['list_dir', 'file'],
   ['notebookedit', 'file'],
+  ['attach', 'file'],
+  ['artifacts', 'file'],
+  ['extract_document', 'file'],
 
   ['webfetch', 'web'],
   ['websearch', 'web'],

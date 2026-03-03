@@ -1410,14 +1410,17 @@ describe('SwarmWebSocketServer', () => {
 
     expect(workerEvent.type).toBe('conversation_message')
 
+    const rawToolName = 'extract_document'
+    const rawToolCallId = 'call-edge|item with spaces/and-symbols'
+
     ;(manager as any).conversationProjector.emitConversationLog({
       type: 'conversation_log',
       agentId: worker.agentId,
       timestamp: new Date().toISOString(),
       source: 'runtime_log',
       kind: 'tool_execution_start',
-      toolName: 'bash',
-      toolCallId: 'call-1',
+      toolName: rawToolName,
+      toolCallId: rawToolCallId,
       text: '{"command":"ls"}',
     })
 
@@ -1427,10 +1430,14 @@ describe('SwarmWebSocketServer', () => {
         event.type === 'conversation_log' &&
         event.agentId === worker.agentId &&
         event.kind === 'tool_execution_start' &&
-        event.toolName === 'bash',
+        event.toolName === rawToolName,
     )
 
     expect(logEvent.type).toBe('conversation_log')
+    if (logEvent.type === 'conversation_log') {
+      expect(logEvent.toolName).toBe(rawToolName)
+      expect(logEvent.toolCallId).toBe(rawToolCallId)
+    }
 
     client.close()
     await once(client, 'close')

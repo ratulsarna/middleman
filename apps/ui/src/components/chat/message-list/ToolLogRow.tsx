@@ -219,7 +219,7 @@ function mapToolStatus(entry: ToolExecutionDisplayEntry): ToolDisplayStatus {
   }
 
   const lowered = (entry.outputPayload ?? entry.latestPayload ?? '').toLowerCase()
-  if (lowered.includes('[aborted]') || lowered.includes('cancel')) {
+  if (lowered.includes('[aborted]') || lowered.includes('cancel') || /\bskip(?:ped)?\b/.test(lowered)) {
     return 'cancelled'
   }
 

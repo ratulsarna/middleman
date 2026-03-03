@@ -158,4 +158,23 @@ describe('ToolLogRow', () => {
 
     expect(html).toContain('Agent task cancelled')
   })
+
+  it('treats skipped tool outputs as cancelled', () => {
+    const html = renderToolRow({
+      category: 'file',
+      toolName: 'extract_document',
+      latestKind: 'tool_execution_end',
+      outputPayload: '{"message":"Skipped due to queued user message."}',
+      latestPayload: '{"message":"Skipped due to queued user message."}',
+      isError: true,
+      classification: {
+        callable: true,
+        category: 'file',
+        displayKind: 'callable-file',
+        normalizedName: 'extract_document',
+      },
+    })
+
+    expect(html).toContain('File operation cancelled')
+  })
 })
