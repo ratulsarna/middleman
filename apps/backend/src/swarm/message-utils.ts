@@ -96,6 +96,16 @@ export function extractMessageText(message: unknown): string | undefined {
   return text.length > 0 ? text : undefined;
 }
 
+export function extractMessageThinking(message: unknown): string | undefined {
+  if (!message || typeof message !== "object") return undefined;
+
+  const thinking = (message as { thinking?: unknown }).thinking;
+  if (typeof thinking !== "string") return undefined;
+
+  const trimmed = thinking.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 export function extractMessageImageAttachments(message: unknown): ConversationImageAttachment[] {
   if (!message || typeof message !== "object") {
     return [];

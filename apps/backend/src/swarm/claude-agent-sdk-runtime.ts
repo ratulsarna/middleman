@@ -1180,15 +1180,18 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
 
   private async emitAssistantMessageEvents(message: SDKAssistantMessage): Promise<void> {
     const content = toRuntimeMessageContent(message.message?.content);
+    const thinking = extractThinkingText(message.message?.content);
     const stopReason = readStopReason(message.message) ?? (message.error ? "error" : undefined);
     const sessionMessage: {
       role: "assistant";
       content: ReturnType<typeof toRuntimeMessageContent>;
+      thinking?: string;
       stopReason?: string;
       errorMessage?: string;
     } = {
       role: "assistant",
       content,
+      ...(thinking ? { thinking } : {}),
       ...(stopReason ? { stopReason } : {})
     };
     if (message.error) {
@@ -1537,6 +1540,36 @@ function toRuntimeMessageContent(content: unknown): Array<{ type: "text" | "imag
   }
 
   return normalized;
+}
+
+function extractThinkingText(content: unknown): string | undefined {
+  if (!Array.isArray(content)) {
+    return undefined;
+  }
+
+  const parts: string[] = [];
+
+  for (const item of content) {
+    if (!item || typeof item !== "object") {
+      continue;
+    }
+
+    const type = (item as { type?: unknown }).type;
+
+    if (type === "thinking") {
+      const thinking = (item as { thinking?: unknown }).thinking;
+      if (typeof thinking === "string" && thinking.trim().length > 0) {
+        parts.push(thinking);
+      }
+    }
+    // redacted_thinking blocks contain no readable text, skip
+  }
+
+  if (parts.length === 0) {
+    return undefined;
+  }
+
+  return parts.join("\n\n").trim() || undefined;
 }
 
 function clampClaudeEffortToSupportedFloor(

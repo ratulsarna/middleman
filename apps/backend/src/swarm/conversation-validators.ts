@@ -43,6 +43,10 @@ export function isConversationMessageEvent(value: unknown): value is Conversatio
     }
   }
 
+  if (maybe.thinking !== undefined && typeof maybe.thinking !== "string") {
+    return false;
+  }
+
   if (maybe.sourceContext !== undefined && !isMessageSourceContext(maybe.sourceContext)) {
     return false;
   }

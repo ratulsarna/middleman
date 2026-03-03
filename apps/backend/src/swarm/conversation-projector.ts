@@ -7,6 +7,7 @@ import {
   extractMessageImageAttachments,
   extractMessageStopReason,
   extractMessageText,
+  extractMessageThinking,
   extractRole,
   isStrictContextOverflowMessage,
   normalizeProviderErrorMessage
@@ -149,13 +150,15 @@ export class ConversationProjector {
         const extractedText = extractMessageText(event.message);
         const text = extractedText ?? "(non-text message)";
         const attachments = extractMessageImageAttachments(event.message);
+        const thinking = extractMessageThinking(event.message);
 
-        if ((role === "assistant" || role === "system") && (extractedText || attachments.length > 0)) {
+        if ((role === "assistant" || role === "system") && (extractedText || attachments.length > 0 || thinking)) {
           this.emitConversationMessage({
             type: "conversation_message",
             agentId,
             role,
             text: extractedText ?? "",
+            thinking: thinking || undefined,
             attachments: attachments.length > 0 ? attachments : undefined,
             timestamp,
             source: "system"

@@ -195,6 +195,7 @@ export interface ConversationMessageEvent {
   agentId: string;
   role: "user" | "assistant" | "system";
   text: string;
+  thinking?: string;
   attachments?: ConversationAttachment[];
   timestamp: string;
   source: "user_input" | "speak_to_user" | "system";

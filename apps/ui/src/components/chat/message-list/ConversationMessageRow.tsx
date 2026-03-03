@@ -1,4 +1,7 @@
+import { useId, useState } from 'react'
+import { Brain, ChevronRight } from 'lucide-react'
 import { MarkdownMessage } from '@/components/chat/MarkdownMessage'
+import { cn } from '@/lib/utils'
 import type { ArtifactReference } from '@/lib/artifacts'
 import { MessageAttachments } from './MessageAttachments'
 import { SourceBadge, formatTimestamp } from './message-row-utils'
@@ -16,8 +19,10 @@ export function ConversationMessageRow({
   const normalizedText = message.text.trim()
   const hasText = normalizedText.length > 0 && normalizedText !== '.'
   const attachments = message.attachments ?? []
+  const thinking = message.role === 'assistant' ? message.thinking?.trim() : undefined
+  const hasThinking = !!thinking && thinking.length > 0
 
-  if (!hasText && attachments.length === 0) {
+  if (!hasText && attachments.length === 0 && !hasThinking) {
     return null
   }
 
@@ -77,6 +82,7 @@ export function ConversationMessageRow({
 
   return (
     <div className="min-w-0 space-y-2 text-foreground">
+      {hasThinking ? <ThinkingBlock thinking={thinking} /> : null}
       {hasText ? (
         <MarkdownMessage content={normalizedText} onArtifactClick={onArtifactClick} />
       ) : null}
@@ -87,6 +93,53 @@ export function ConversationMessageRow({
           {timestampLabel ? <span>{timestampLabel}</span> : null}
         </div>
       ) : null}
+    </div>
+  )
+}
+
+function ThinkingBlock({ thinking }: { thinking: string }) {
+  const [isExpanded, setIsExpanded] = useState(true)
+  const contentId = useId()
+
+  return (
+    <div className="rounded-lg border border-purple-300/40 bg-purple-50/50 dark:border-purple-400/20 dark:bg-purple-500/5">
+      <button
+        type="button"
+        className={cn(
+          'flex w-full items-center gap-1.5 rounded-lg px-3 py-1.5 text-left text-xs font-medium',
+          'text-purple-700 dark:text-purple-300',
+          'transition-colors hover:bg-purple-100/50 dark:hover:bg-purple-500/10',
+          'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60',
+        )}
+        aria-expanded={isExpanded}
+        aria-controls={contentId}
+        onClick={() => setIsExpanded((prev) => !prev)}
+      >
+        <Brain className="size-3.5 shrink-0" aria-hidden="true" />
+        <span>Thinking</span>
+        <ChevronRight
+          className={cn(
+            'ml-auto size-3 text-purple-500/70 transition-transform dark:text-purple-400/70',
+            isExpanded && 'rotate-90',
+          )}
+          aria-hidden="true"
+        />
+      </button>
+      <div
+        id={contentId}
+        className={cn(
+          'grid transition-[grid-template-rows] duration-200 ease-out',
+          isExpanded ? 'grid-rows-[1fr]' : 'grid-rows-[0fr]',
+        )}
+      >
+        <div className="overflow-hidden">
+          <div className="px-3 pb-2">
+            <pre className="whitespace-pre-wrap break-words text-xs leading-relaxed text-purple-900/80 dark:text-purple-100/70">
+              {thinking}
+            </pre>
+          </div>
+        </div>
+      </div>
     </div>
   )
 }
