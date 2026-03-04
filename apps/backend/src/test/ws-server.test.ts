@@ -2514,6 +2514,61 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
+  it('lazily recreates an idle Claude manager runtime when output-style metadata is requested', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const claudeManager = await manager.createManager('manager', {
+      name: 'Claude Lazy Runtime Manager',
+      cwd: config.defaultCwd,
+      model: 'claude-agent-sdk',
+    })
+
+    const initialRuntime = manager.runtimeByAgentId.get(claudeManager.agentId)
+    if (!initialRuntime) {
+      throw new Error('Expected runtime for Claude manager')
+    }
+
+    const runtimes = (manager as unknown as { runtimes: Map<string, SwarmAgentRuntime> }).runtimes
+    runtimes.delete(claudeManager.agentId)
+
+    const settingsDir = join(claudeManager.cwd, '.claude')
+    await mkdir(settingsDir, { recursive: true })
+    await writeFile(join(settingsDir, 'settings.local.json'), JSON.stringify({ outputStyle: 'technical' }), 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+      )
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as {
+        selectedStyle: string | null
+        availableStyles: string[]
+        warning?: string
+      }
+
+      expect(payload.selectedStyle).toBe('technical')
+      expect(payload.warning).toBeUndefined()
+
+      const recreatedRuntime = manager.runtimeByAgentId.get(claudeManager.agentId)
+      expect(recreatedRuntime).toBeDefined()
+      expect(recreatedRuntime).not.toBe(initialRuntime)
+      expect(recreatedRuntime?.claudeOutputStyleMetadataCalls).toBe(1)
+    } finally {
+      await server.stop()
+    }
+  })
+
   it('returns immediate fallback warning during output-style GET when manager is streaming', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port, true)

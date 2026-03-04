@@ -23,30 +23,33 @@ cd ../Nexus-dev
 # edit code, run checks, etc.
 ```
 
-## Important Caveat (State Collision)
+## State Isolation (Current)
 
-Both clones currently use the same default data directory: `~/.nexus`.
+Dev and prod are isolated by default:
 
-That means two simultaneously running backends can collide on shared state even if ports differ.
+- `pnpm dev` / `pnpm dev:backend` uses `NEXUS_DATA_DIR=~/.nexus-dev`
+- `pnpm prod:start` uses `~/.nexus` (unless `NEXUS_DATA_DIR` is explicitly set)
 
-## If You Must Run Both At The Same Time
+So running prod in `Nexus` and dev in `Nexus-dev` does not share state.
 
-Isolate each clone with its own `HOME` so each one gets its own `.nexus`:
+## When Collisions Can Still Happen
+
+You can still collide if both clones run the same mode:
+
+- prod + prod -> both use `~/.nexus` by default
+- dev + dev -> both use `~/.nexus-dev` by default
+
+If needed, isolate per clone by setting `NEXUS_DATA_DIR` explicitly:
 
 ```bash
 cd ../Nexus
-HOME=$PWD/.home pnpm prod:start
+NEXUS_DATA_DIR=$PWD/.nexus-data pnpm prod:start
 ```
 
 ```bash
 cd ../Nexus-dev
-HOME=$PWD/.home pnpm dev
+NEXUS_DATA_DIR=$PWD/.nexus-data pnpm dev
 ```
-
-This creates per-clone state directories:
-
-- `../Nexus/.home/.nexus`
-- `../Nexus-dev/.home/.nexus`
 
 ## Log Access
 

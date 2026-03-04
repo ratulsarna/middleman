@@ -1548,8 +1548,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       throw new Error(`Manager ${managerId} is not using claude-agent-sdk`);
     }
 
-    const runtime = this.runtimes.get(managerId);
-    if (!runtime || typeof runtime.getClaudeOutputStyleMetadata !== "function") {
+    const runtime = await this.getOrCreateRuntimeForDescriptor(managerDescriptor);
+    if (typeof runtime.getClaudeOutputStyleMetadata !== "function") {
       throw new Error(`Claude metadata runtime is unavailable for manager ${managerId}`);
     }
 
