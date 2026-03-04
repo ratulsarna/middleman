@@ -31,6 +31,11 @@ function isKnownClaudeSdkShutdownRace(message: string, stack?: string): boolean 
     return false;
   }
 
+  const hasKnownTransportReuseFailure = normalizedMessage.includes("already connected to a transport");
+  if (hasKnownTransportReuseFailure) {
+    return hasClaudeSdkStackContext(stack);
+  }
+
   const hasKnownWriteFailure =
     normalizedMessage.includes("processtransport is not ready for writing") ||
     normalizedMessage.includes("write after end") ||
@@ -44,6 +49,10 @@ function isKnownClaudeSdkShutdownRace(message: string, stack?: string): boolean 
     return true;
   }
 
+  return hasClaudeSdkStackContext(stack);
+}
+
+function hasClaudeSdkStackContext(stack?: string): boolean {
   const normalizedStack = stack?.toLowerCase();
   if (!normalizedStack) {
     return false;

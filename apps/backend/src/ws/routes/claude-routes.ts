@@ -72,12 +72,16 @@ async function handleClaudeOutputStyleHttpRequest(
 
     let availableStyles: string[] = [];
     let runtimeSelectedStyle: string | null = null;
-    try {
-      const runtimeMetadata = await swarmManager.getClaudeManagerOutputStyleMetadata(route.managerId);
-      availableStyles = runtimeMetadata.availableStyles;
-      runtimeSelectedStyle = runtimeMetadata.selectedStyle;
-    } catch (error) {
-      warnings.push(`Unable to load runtime output styles: ${toErrorMessage(error)}`);
+    if (isRuntimeBusyForOutputStyleMetadata(manager.status)) {
+      warnings.push("Unable to load runtime output styles: manager is busy processing a turn. Try refresh.");
+    } else {
+      try {
+        const runtimeMetadata = await swarmManager.getClaudeManagerOutputStyleMetadata(route.managerId);
+        availableStyles = runtimeMetadata.availableStyles;
+        runtimeSelectedStyle = runtimeMetadata.selectedStyle;
+      } catch (error) {
+        warnings.push(`Unable to load runtime output styles: ${toErrorMessage(error)}`);
+      }
     }
 
     if (settingsResult.warning) {
@@ -147,6 +151,10 @@ function parseClaudeOutputStyleUpdateBody(value: unknown): { outputStyle: string
 
 function isClaudeAgentSdkProvider(provider: string): boolean {
   return provider.trim().toLowerCase() === "claude-agent-sdk";
+}
+
+function isRuntimeBusyForOutputStyleMetadata(status: string): boolean {
+  return status === "streaming";
 }
 
 function toErrorMessage(error: unknown): string {

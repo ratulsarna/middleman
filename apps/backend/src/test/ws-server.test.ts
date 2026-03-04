@@ -31,6 +31,7 @@ class FakeRuntime {
     availableStyles: [],
   }
   claudeOutputStyleMetadataError: Error | null = null
+  claudeOutputStyleMetadataCalls = 0
 
   constructor(descriptor: AgentDescriptor) {
     this.descriptor = descriptor
@@ -92,6 +93,7 @@ class FakeRuntime {
   }
 
   async getClaudeOutputStyleMetadata(): Promise<{ selectedStyle: string | null; availableStyles: string[] }> {
+    this.claudeOutputStyleMetadataCalls += 1
     if (this.claudeOutputStyleMetadataError) {
       throw this.claudeOutputStyleMetadataError
     }
@@ -2507,6 +2509,65 @@ describe('SwarmWebSocketServer', () => {
       expect(payload.selectedStyle).toBe('technical')
       expect(payload.availableStyles).toEqual([])
       expect(payload.warning).toContain('Unable to load runtime output styles')
+    } finally {
+      await server.stop()
+    }
+  })
+
+  it('returns immediate fallback warning during output-style GET when manager is streaming', async () => {
+    const port = await getAvailablePort()
+    const config = await makeTempConfig(port, true)
+
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+    const claudeManager = await manager.createManager('manager', {
+      name: 'Claude Busy Manager',
+      cwd: config.defaultCwd,
+      model: 'claude-agent-sdk',
+    })
+
+    const runtime = manager.runtimeByAgentId.get(claudeManager.agentId)
+    if (!runtime) {
+      throw new Error('Expected runtime for Claude manager')
+    }
+    runtime.claudeOutputStyleMetadata = {
+      selectedStyle: 'concise',
+      availableStyles: ['concise', 'detailed'],
+    }
+
+    const descriptors = (manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors
+    const descriptor = descriptors.get(claudeManager.agentId)
+    if (!descriptor) {
+      throw new Error('Expected descriptor for Claude manager')
+    }
+    descriptor.status = 'streaming'
+
+    const settingsDir = join(claudeManager.cwd, '.claude')
+    await mkdir(settingsDir, { recursive: true })
+    await writeFile(join(settingsDir, 'settings.local.json'), JSON.stringify({ outputStyle: 'technical' }), 'utf8')
+
+    const server = new SwarmWebSocketServer({
+      swarmManager: manager,
+      host: config.host,
+      port: config.port,
+      allowNonManagerSubscriptions: config.allowNonManagerSubscriptions,
+    })
+    await server.start()
+
+    try {
+      const response = await fetch(
+        `http://${config.host}:${config.port}/api/managers/${encodeURIComponent(claudeManager.agentId)}/claude/output-style`,
+      )
+      expect(response.status).toBe(200)
+      const payload = (await response.json()) as {
+        selectedStyle: string | null
+        availableStyles: string[]
+        warning?: string
+      }
+      expect(payload.selectedStyle).toBe('technical')
+      expect(payload.availableStyles).toEqual([])
+      expect(payload.warning).toContain('manager is busy processing a turn')
+      expect(runtime.claudeOutputStyleMetadataCalls).toBe(0)
     } finally {
       await server.stop()
     }

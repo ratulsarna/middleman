@@ -45,6 +45,7 @@ import type {
 
 const AUTH_REQUIRED_ERROR_CODE = "CLAUDE_AGENT_SDK_AUTH_REQUIRED";
 const RESUME_RECOVERY_ERROR_CODE = "CLAUDE_AGENT_SDK_RESUME_RECOVERY";
+const CLAUDE_OUTPUT_STYLE_METADATA_BUSY_ERROR_CODE = "CLAUDE_AGENT_SDK_OUTPUT_STYLE_METADATA_BUSY";
 const TOOL_MCP_SERVER_NAME = "swarm-tools";
 const CLAUDE_RUNTIME_STATE_ENTRY_TYPE = "swarm_claude_agent_sdk_runtime_state";
 const CLAUDE_RUNTIME_STATE_FILE_SUFFIX = ".claude-runtime-state.json";
@@ -144,6 +145,12 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   private isStopping = false;
   private isCompacting = false;
   private sessionId: string | undefined;
+  private inFlightOutputStyleMetadataProbe:
+    | Promise<{
+        selectedStyle: string | null;
+        availableStyles: string[];
+      }>
+    | undefined;
 
   private constructor(options: {
     descriptor: AgentDescriptor;
@@ -442,6 +449,33 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   }> {
     this.ensureNotTerminated();
 
+    if (this.inFlightOutputStyleMetadataProbe) {
+      return this.inFlightOutputStyleMetadataProbe;
+    }
+
+    if (this.isBusy()) {
+      throw createOutputStyleMetadataBusyError();
+    }
+
+    const probe = this.readClaudeOutputStyleMetadata();
+    this.inFlightOutputStyleMetadataProbe = probe;
+
+    try {
+      return await probe;
+    } finally {
+      if (this.inFlightOutputStyleMetadataProbe === probe) {
+        this.inFlightOutputStyleMetadataProbe = undefined;
+      }
+      if (this.pendingDeliveries.length > 0) {
+        this.startProcessingLoopIfNeeded();
+      }
+    }
+  }
+
+  private async readClaudeOutputStyleMetadata(): Promise<{
+    selectedStyle: string | null;
+    availableStyles: string[];
+  }> {
     const auth = await this.resolveAuthToken();
     let settingSources = [...this.settingsPolicy.primarySources];
     try {
@@ -469,6 +503,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
         requestedEffort: undefined,
         effectiveEffort: undefined
       },
+      attachToolMcpServer: false,
       onStderr: () => {}
     });
 
@@ -511,11 +546,16 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   }
 
   private isBusy(): boolean {
-    return this.currentQuery !== undefined || this.processingLoop !== undefined || this.isCompacting;
+    return (
+      this.currentQuery !== undefined ||
+      this.processingLoop !== undefined ||
+      this.isCompacting ||
+      this.inFlightOutputStyleMetadataProbe !== undefined
+    );
   }
 
   private startProcessingLoopIfNeeded(): void {
-    if (this.processingLoop || this.isCompacting) {
+    if (this.processingLoop || this.isCompacting || this.inFlightOutputStyleMetadataProbe) {
       return;
     }
 
@@ -1058,8 +1098,10 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     abortController?: AbortController;
     attemptedResumeId?: string;
     reasoning: ClaudeResolvedReasoningConfig;
+    attachToolMcpServer?: boolean;
     onStderr: (trimmed: string) => void;
   }): Query {
+    const attachToolMcpServer = options.attachToolMcpServer ?? true;
     return query({
       prompt: options.prompt,
       options: {
@@ -1070,9 +1112,13 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
         includePartialMessages: false,
-        mcpServers: {
-          [TOOL_MCP_SERVER_NAME]: this.sdkMcpServer
-        },
+        ...(attachToolMcpServer
+          ? {
+              mcpServers: {
+                [TOOL_MCP_SERVER_NAME]: this.sdkMcpServer
+              }
+            }
+          : {}),
         env: this.buildRuntimeEnv(options.auth),
         ...(options.abortController
           ? {
@@ -1906,6 +1952,12 @@ function normalizeOutputStyleMetadataList(value: unknown): string[] {
   }
 
   return Array.from(styles);
+}
+
+function createOutputStyleMetadataBusyError(): Error {
+  const error = new Error("Claude output-style metadata is unavailable while the runtime is busy.");
+  (error as Error & { code?: string }).code = CLAUDE_OUTPUT_STYLE_METADATA_BUSY_ERROR_CODE;
+  return error;
 }
 
 function createAuthRequiredError(reason: string): Error {

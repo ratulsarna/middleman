@@ -479,7 +479,158 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
     expect(sdkMockState.queryCalls).toHaveLength(1);
     expect(sdkMockState.queryCalls[0]?.prompt).toBe("Nexus output style metadata probe.");
     expect(sdkMockState.queryCalls[0]?.options?.abortController).toBeUndefined();
+    expect(sdkMockState.queryCalls[0]?.options?.mcpServers).toBeUndefined();
     expect(sdkMockState.interruptAbortedSignals).toEqual([false]);
+
+    await runtime.terminate({ abort: true });
+  });
+
+  it("returns metadata busy error without starting a probe when runtime is handling a turn", async () => {
+    sdkMockState.streams.push([
+      {
+        __delay: 150
+      },
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "session-output-style-busy",
+        usage: undefined,
+        modelUsage: {}
+      }
+    ]);
+
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "claude-refresh-token",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor: createDescriptor(rootDir),
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      systemPrompt: "You are a worker",
+      tools: [],
+      authFile
+    });
+
+    await runtime.sendMessage("keep busy");
+    await waitFor(() => sdkMockState.queryCalls.length === 1);
+
+    await expect(runtime.getClaudeOutputStyleMetadata()).rejects.toThrow(
+      "Claude output-style metadata is unavailable while the runtime is busy."
+    );
+    expect(sdkMockState.queryCalls).toHaveLength(1);
+
+    await runtime.stopInFlight({ abort: true });
+    await waitFor(() => runtime.getStatus() === "idle");
+    await runtime.terminate({ abort: true });
+  });
+
+  it("single-flights concurrent output-style metadata probes", async () => {
+    let resolveInitialization: ((value: { output_style: string; available_output_styles: string[] }) => void) | undefined;
+    const deferredInitialization = new Promise<{ output_style: string; available_output_styles: string[] }>((resolve) => {
+      resolveInitialization = resolve;
+    });
+    sdkMockState.initializationResults.push(deferredInitialization);
+
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "claude-refresh-token",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor: createDescriptor(rootDir),
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      systemPrompt: "You are a worker",
+      tools: [],
+      authFile
+    });
+
+    const firstProbe = runtime.getClaudeOutputStyleMetadata();
+    const secondProbe = runtime.getClaudeOutputStyleMetadata();
+    await waitFor(() => sdkMockState.queryCalls.length === 1);
+
+    resolveInitialization?.({
+      output_style: "concise",
+      available_output_styles: ["concise", "technical", ""]
+    });
+
+    const [firstResult, secondResult] = await Promise.all([firstProbe, secondProbe]);
+    expect(firstResult).toEqual({
+      selectedStyle: "concise",
+      availableStyles: ["concise", "technical"]
+    });
+    expect(secondResult).toEqual(firstResult);
+    expect(sdkMockState.queryCalls).toHaveLength(1);
+
+    await runtime.terminate({ abort: true });
+  });
+
+  it("defers delivery query start while output-style metadata probe is in flight", async () => {
+    let resolveInitialization: ((value: { output_style: string; available_output_styles: string[] }) => void) | undefined;
+    const deferredInitialization = new Promise<{ output_style: string; available_output_styles: string[] }>((resolve) => {
+      resolveInitialization = resolve;
+    });
+    sdkMockState.initializationResults.push(deferredInitialization);
+    sdkMockState.streams.push([
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "session-after-probe",
+        usage: undefined,
+        modelUsage: {}
+      }
+    ]);
+
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "claude-refresh-token",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor: createDescriptor(rootDir),
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      systemPrompt: "You are a worker",
+      tools: [],
+      authFile
+    });
+
+    const probePromise = runtime.getClaudeOutputStyleMetadata();
+    await waitFor(() => sdkMockState.queryCalls.length === 1);
+
+    const receipt = await runtime.sendMessage("run after probe");
+    expect(receipt.acceptedMode).toBe("followUp");
+    expect(sdkMockState.queryCalls).toHaveLength(1);
+
+    resolveInitialization?.({
+      output_style: "concise",
+      available_output_styles: ["concise"]
+    });
+    await probePromise;
+
+    await waitFor(() => sdkMockState.queryCalls.length === 2);
+    expect(sdkMockState.queryCalls[1]?.prompt).toBe("run after probe");
+    await waitFor(() => runtime.getPendingCount() === 0 && runtime.getStatus() === "idle");
 
     await runtime.terminate({ abort: true });
   });
