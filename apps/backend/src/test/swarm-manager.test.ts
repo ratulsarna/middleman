@@ -2041,7 +2041,12 @@ describe('SwarmManager', () => {
 
     expect(withOverride.resetApplied).toBe(true)
     expect(withOverride.manager.promptOverride).toBe(promptOverride)
-    expect(manager.systemPromptByAgentId.get('manager')).toBe(promptOverride)
+    const overrideSystemPrompt = manager.systemPromptByAgentId.get('manager')
+    expect(overrideSystemPrompt).toContain('User-facing output MUST go through speak_to_user.')
+    expect(overrideSystemPrompt).toContain(
+      'Use speak_to_user for every user-facing message; for non-web replies, explicitly set target.channel + target.channelId from the inbound source metadata line.',
+    )
+    expect(overrideSystemPrompt).toContain(promptOverride)
 
     const cleared = await manager.updateManager('manager', {
       managerId: 'manager',

@@ -233,6 +233,10 @@ describe("RuntimeFactory", () => {
     };
     expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith("/tmp/project");
     expect(call.systemPrompt).not.toContain("Manager base system prompt");
+    expect(call.systemPrompt).toContain("User-facing output MUST go through speak_to_user.");
+    expect(call.systemPrompt).toContain(
+      "Use speak_to_user for every user-facing message; for non-web replies, explicitly set target.channel + target.channelId from the inbound source metadata line."
+    );
     expect(call.systemPrompt).toContain("Repository policy context.");
   });
 
@@ -268,6 +272,10 @@ describe("RuntimeFactory", () => {
       };
       expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith(projectRoot);
       expect(call.systemPrompt).not.toContain("Manager base system prompt");
+      expect(call.systemPrompt).toContain("User-facing output MUST go through speak_to_user.");
+      expect(call.systemPrompt).toContain(
+        "Use speak_to_user for every user-facing message; for non-web replies, explicitly set target.channel + target.channelId from the inbound source metadata line."
+      );
       expect(call.systemPrompt).toContain("Repository policy context.");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
