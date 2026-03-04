@@ -12,6 +12,7 @@ import { AgentRuntime } from "./agent-runtime.js";
 import { ClaudeAgentSdkRuntime } from "./claude-agent-sdk-runtime.js";
 import { readClaudeOutputStyleLenient } from "./claude-output-style-settings.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
+import { MANDATORY_MANAGER_OPERATIONAL_PREAMBLE } from "./manager-mandatory-preamble.js";
 import { DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS } from "./model-preset-config.js";
 import type { RuntimeErrorEvent, RuntimeSessionEvent, SwarmAgentRuntime } from "./runtime-types.js";
 import { buildSwarmTools, type SwarmToolHost } from "./swarm-tools.js";
@@ -234,7 +235,7 @@ export class RuntimeFactory {
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const managerHasSelectedOutputStyle = await this.readManagerClaudeOutputStyleSelection(descriptor);
     const claudeSystemPrompt = this.buildRuntimeSystemPrompt(
-      managerHasSelectedOutputStyle ? "" : systemPrompt,
+      managerHasSelectedOutputStyle ? MANDATORY_MANAGER_OPERATIONAL_PREAMBLE : systemPrompt,
       {
         swarmContextFiles
       }

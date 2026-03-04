@@ -13,6 +13,7 @@ import { ConversationProjector } from "./conversation-projector.js";
 import { PersistenceService } from "./persistence-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
+import { prependMandatoryManagerOperationalPreamble } from "./manager-mandatory-preamble.js";
 import {
   listDirectories,
   normalizeAllowlistRoots,
@@ -1876,7 +1877,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     if (descriptor.role === "manager") {
       const promptOverride = normalizePromptOverride(descriptor.promptOverride);
       if (promptOverride) {
-        return promptOverride;
+        return prependMandatoryManagerOperationalPreamble(promptOverride);
       }
       return this.resolveRequiredArchetypePrompt(MANAGER_ARCHETYPE_ID);
     }
