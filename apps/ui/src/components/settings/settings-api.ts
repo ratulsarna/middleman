@@ -3,7 +3,6 @@
 /* ------------------------------------------------------------------ */
 
 import type {
-  SettingsEnvVariable,
   SettingsAuthProviderId,
   SettingsAuthProvider,
   SettingsAuthOAuthFlowState,
@@ -88,17 +87,6 @@ async function readApiError(response: Response): Promise<string> {
 /* ------------------------------------------------------------------ */
 /*  Type guards                                                       */
 /* ------------------------------------------------------------------ */
-
-function isSettingsEnvVariable(value: unknown): value is SettingsEnvVariable {
-  if (!value || typeof value !== 'object') return false
-  const v = value as Partial<SettingsEnvVariable>
-  return (
-    typeof v.name === 'string' && v.name.trim().length > 0 &&
-    typeof v.skillName === 'string' && v.skillName.trim().length > 0 &&
-    typeof v.required === 'boolean' &&
-    typeof v.isSet === 'boolean'
-  )
-}
 
 function parseSettingsAuthProvider(value: unknown): SettingsAuthProvider | null {
   if (!value || typeof value !== 'object') return null
@@ -197,31 +185,6 @@ function parseSettingsAuthOAuthEventData(rawData: string): Record<string, unknow
   try { parsed = JSON.parse(rawData) } catch { throw new Error('Invalid OAuth event payload.') }
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('Invalid OAuth event payload.')
   return parsed as Record<string, unknown>
-}
-
-/* ------------------------------------------------------------------ */
-/*  Env variables API                                                 */
-/* ------------------------------------------------------------------ */
-
-export async function fetchSettingsEnvVariables(wsUrl: string): Promise<SettingsEnvVariable[]> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/env')
-  const response = await fetch(endpoint)
-  if (!response.ok) throw new Error(await readApiError(response))
-  const payload = (await response.json()) as { variables?: unknown }
-  if (!payload || !Array.isArray(payload.variables)) return []
-  return payload.variables.filter(isSettingsEnvVariable)
-}
-
-export async function updateSettingsEnvVariables(wsUrl: string, values: Record<string, string>): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, '/api/settings/env')
-  const response = await fetch(endpoint, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ values }) })
-  if (!response.ok) throw new Error(await readApiError(response))
-}
-
-export async function deleteSettingsEnvVariable(wsUrl: string, variableName: string): Promise<void> {
-  const endpoint = resolveApiEndpoint(wsUrl, `/api/settings/env/${encodeURIComponent(variableName)}`)
-  const response = await fetch(endpoint, { method: 'DELETE' })
-  if (!response.ok) throw new Error(await readApiError(response))
 }
 
 /* ------------------------------------------------------------------ */

@@ -2,16 +2,6 @@
 /*  Shared types for settings components                              */
 /* ------------------------------------------------------------------ */
 
-export interface SettingsEnvVariable {
-  name: string
-  description?: string
-  required: boolean
-  helpUrl?: string
-  skillName: string
-  isSet: boolean
-  maskedValue?: string
-}
-
 export type SettingsAuthProviderId = 'anthropic' | 'openai-codex' | 'claude-agent-sdk'
 
 export interface SettingsAuthProvider {

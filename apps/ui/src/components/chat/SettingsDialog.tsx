@@ -3,7 +3,6 @@ import { SettingsLayout, type SettingsTab } from '@/components/settings/Settings
 import { SettingsGeneral } from '@/components/settings/SettingsGeneral'
 import { SettingsAuth } from '@/components/settings/SettingsAuth'
 import { SettingsIntegrations } from '@/components/settings/SettingsIntegrations'
-import { SettingsSkills } from '@/components/settings/SettingsSkills'
 import type { UpdateManagerInput, UpdateManagerResult } from '@/lib/ws-client'
 import type { AgentDescriptor, SlackStatusEvent, TelegramStatusEvent } from '@nexus/protocol'
 
@@ -40,7 +39,6 @@ export function SettingsPanel({
           telegramStatus={telegramStatus}
         />
       )}
-      {activeTab === 'skills' && <SettingsSkills wsUrl={wsUrl} />}
     </SettingsLayout>
   )
 }
