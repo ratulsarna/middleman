@@ -30,6 +30,7 @@ export interface AgentDescriptor {
   updatedAt: string
   cwd: string
   model: AgentModelDescriptor
+  spawnDefaultModel?: AgentModelDescriptor
   sessionFile: string
   contextUsage?: AgentContextUsage
 }

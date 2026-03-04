@@ -42,6 +42,10 @@ export interface UpdateManagerInput {
   modelId?: string
   thinkingLevel?: ThinkingLevel
   promptOverride?: string
+  spawnDefaultProvider?: string
+  spawnDefaultModelId?: string
+  spawnDefaultThinkingLevel?: ThinkingLevel
+  clearSpawnDefault?: boolean
 }
 
 export interface UpdateManagerResult {
@@ -313,6 +317,10 @@ export class ManagerWsClient {
     const modelId = input.modelId?.trim()
     const thinkingLevel = input.thinkingLevel
     const promptOverride = input.promptOverride
+    const spawnDefaultProvider = input.spawnDefaultProvider?.trim()
+    const spawnDefaultModelId = input.spawnDefaultModelId?.trim()
+    const spawnDefaultThinkingLevel = input.spawnDefaultThinkingLevel
+    const clearSpawnDefault = input.clearSpawnDefault
 
     if (!managerId) {
       throw new Error('Manager id is required.')
@@ -323,11 +331,18 @@ export class ManagerWsClient {
       throw new Error('Manager provider and model are required together.')
     }
 
+    const hasSpawnDefaultField = spawnDefaultProvider !== undefined || spawnDefaultModelId !== undefined
+    if (hasSpawnDefaultField && (!spawnDefaultProvider || !spawnDefaultModelId)) {
+      throw new Error('Spawn default provider and model are required together.')
+    }
+
     if (
       provider === undefined &&
       modelId === undefined &&
       thinkingLevel === undefined &&
-      promptOverride === undefined
+      promptOverride === undefined &&
+      !hasSpawnDefaultField &&
+      !clearSpawnDefault
     ) {
       throw new Error('At least one manager setting must be provided.')
     }
@@ -343,6 +358,10 @@ export class ManagerWsClient {
       modelId,
       thinkingLevel,
       promptOverride,
+      spawnDefaultProvider,
+      spawnDefaultModelId,
+      spawnDefaultThinkingLevel,
+      clearSpawnDefault: clearSpawnDefault === true ? true : undefined,
       requestId,
     }))
   }

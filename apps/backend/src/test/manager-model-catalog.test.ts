@@ -91,7 +91,7 @@ describe("ManagerModelCatalogService", () => {
     expect(claudeAgentSdk.models).toEqual(anthropic.models);
 
     const codexAppServer = catalog.providers[3];
-    expect(codexAppServer.surfaces).toEqual(["manager_settings"]);
+    expect(codexAppServer.surfaces).toEqual(["manager_settings", "spawn_default"]);
     expect(codexAppServer.models).toEqual([
       {
         modelId: "codex-alpha",

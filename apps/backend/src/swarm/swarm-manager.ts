@@ -163,6 +163,9 @@ function cloneDescriptor(descriptor: AgentDescriptor): AgentDescriptor {
   return {
     ...descriptor,
     model: { ...descriptor.model },
+    spawnDefaultModel: descriptor.spawnDefaultModel
+      ? { ...descriptor.spawnDefaultModel }
+      : undefined,
     contextUsage: cloneContextUsage(descriptor.contextUsage)
   };
 }
@@ -385,7 +388,8 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const agentId = this.generateUniqueAgentId(requestedAgentId);
     const createdAt = this.now();
 
-    const model = this.resolveSpawnModel(input, manager.model);
+    const fallback = manager.spawnDefaultModel ?? manager.model;
+    const model = this.resolveSpawnModel(input, fallback);
     const archetypeId = this.resolveSpawnWorkerArchetypeId(input, agentId);
 
     const descriptor: AgentDescriptor = {
@@ -725,6 +729,10 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       modelId?: string;
       thinkingLevel?: ThinkingLevel;
       promptOverride?: string;
+      spawnDefaultProvider?: string;
+      spawnDefaultModelId?: string;
+      spawnDefaultThinkingLevel?: ThinkingLevel;
+      clearSpawnDefault?: boolean;
     }
   ): Promise<{ manager: AgentDescriptor; resetApplied: boolean }> {
     this.assertManager(callerAgentId, "update managers");
@@ -781,14 +789,73 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       ? normalizePromptOverride(input.promptOverride)
       : currentPromptOverride;
 
+    // --- Spawn default validation ---
+    const hasSpawnDefaultDescriptorField =
+      input.spawnDefaultProvider !== undefined || input.spawnDefaultModelId !== undefined;
+    const requestedSpawnDefaultProvider =
+      parseOptionalNonEmptyString(input.spawnDefaultProvider, "update_manager.spawnDefaultProvider");
+    const requestedSpawnDefaultModelId =
+      parseOptionalNonEmptyString(input.spawnDefaultModelId, "update_manager.spawnDefaultModelId");
+    const requestedSpawnDefaultThinkingLevel =
+      parseThinkingLevel(input.spawnDefaultThinkingLevel, "update_manager.spawnDefaultThinkingLevel");
+    const hasExplicitSpawnDefault =
+      requestedSpawnDefaultProvider !== undefined || requestedSpawnDefaultModelId !== undefined;
+
+    if (input.clearSpawnDefault && hasSpawnDefaultDescriptorField) {
+      throw new Error(
+        "update_manager.clearSpawnDefault cannot be combined with update_manager.spawnDefaultProvider or update_manager.spawnDefaultModelId"
+      );
+    }
+    if (hasSpawnDefaultDescriptorField && !hasExplicitSpawnDefault) {
+      throw new Error(
+        "update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId are required together"
+      );
+    }
+    if (hasExplicitSpawnDefault && (!requestedSpawnDefaultProvider || !requestedSpawnDefaultModelId)) {
+      throw new Error(
+        "update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId are required together"
+      );
+    }
+    if (requestedSpawnDefaultThinkingLevel && !hasExplicitSpawnDefault) {
+      throw new Error(
+        "update_manager.spawnDefaultThinkingLevel requires update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId"
+      );
+    }
+
+    // --- Spawn default application ---
+    let nextSpawnDefaultModel = target.spawnDefaultModel;
+    let spawnDefaultChanged = false;
+
+    if (input.clearSpawnDefault) {
+      if (target.spawnDefaultModel !== undefined) {
+        nextSpawnDefaultModel = undefined;
+        spawnDefaultChanged = true;
+      }
+    } else if (hasExplicitSpawnDefault) {
+      nextSpawnDefaultModel = normalizeManagedModelDescriptor(
+        {
+          provider: requestedSpawnDefaultProvider!,
+          modelId: requestedSpawnDefaultModelId!,
+          thinkingLevel: requestedSpawnDefaultThinkingLevel
+        },
+        { presetDefinitions: this.modelPresetDefinitions }
+      );
+      const currentSdm = target.spawnDefaultModel;
+      spawnDefaultChanged = !currentSdm ||
+        currentSdm.provider !== nextSpawnDefaultModel.provider ||
+        currentSdm.modelId !== nextSpawnDefaultModel.modelId ||
+        currentSdm.thinkingLevel !== nextSpawnDefaultModel.thinkingLevel;
+    }
+
     const modelChanged =
       target.model.provider !== nextModel.provider ||
       target.model.modelId !== nextModel.modelId ||
       target.model.thinkingLevel !== nextModel.thinkingLevel;
     const promptOverrideChanged = currentPromptOverride !== nextPromptOverride;
     const shouldReset = modelChanged || promptOverrideChanged;
+    const hasAnyChange = shouldReset || spawnDefaultChanged;
 
-    if (!shouldReset) {
+    if (!hasAnyChange) {
       this.logDebug("manager:update:no_effective_change", {
         callerAgentId,
         managerId: target.agentId
@@ -806,6 +873,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     } else {
       delete target.promptOverride;
     }
+
+    if (spawnDefaultChanged) {
+      if (nextSpawnDefaultModel) {
+        target.spawnDefaultModel = nextSpawnDefaultModel;
+      } else {
+        delete target.spawnDefaultModel;
+      }
+    }
+
     target.updatedAt = this.now();
     this.descriptors.set(target.agentId, target);
     await this.saveStore();
@@ -814,15 +890,18 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       callerAgentId,
       managerId: target.agentId,
       modelChanged,
-      promptOverrideChanged
+      promptOverrideChanged,
+      spawnDefaultChanged
     });
 
-    await this.resetManagerSession(target.agentId, "api_reset");
+    if (shouldReset) {
+      await this.resetManagerSession(target.agentId, "api_reset");
+    }
 
     const updated = this.getRequiredManagerDescriptor(target.agentId);
     return {
       manager: cloneDescriptor(updated),
-      resetApplied: true
+      resetApplied: shouldReset
     };
   }
 
@@ -2421,21 +2500,16 @@ function validateAgentDescriptor(value: unknown): AgentDescriptor | string {
     return "sessionFile must be a non-empty string";
   }
 
-  const model = value.model;
-  if (!isRecord(model)) {
-    return "model must be an object";
+  const modelError = validateModelDescriptorFields(value.model, "model");
+  if (modelError) {
+    return modelError;
   }
 
-  if (!isNonEmptyString(model.provider)) {
-    return "model.provider must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(model.modelId)) {
-    return "model.modelId must be a non-empty string";
-  }
-
-  if (!isNonEmptyString(model.thinkingLevel)) {
-    return "model.thinkingLevel must be a non-empty string";
+  if (value.spawnDefaultModel !== undefined) {
+    const sdmError = validateModelDescriptorFields(value.spawnDefaultModel, "spawnDefaultModel");
+    if (sdmError) {
+      return sdmError;
+    }
   }
 
   if (value.archetypeId !== undefined && typeof value.archetypeId !== "string") {
@@ -2467,6 +2541,22 @@ function extractDescriptorAgentId(value: unknown): string | undefined {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function validateModelDescriptorFields(value: unknown, fieldName: string): string | null {
+  if (!isRecord(value)) {
+    return `${fieldName} must be an object`;
+  }
+  if (!isNonEmptyString(value.provider)) {
+    return `${fieldName}.provider must be a non-empty string`;
+  }
+  if (!isNonEmptyString(value.modelId)) {
+    return `${fieldName}.modelId must be a non-empty string`;
+  }
+  if (!isNonEmptyString(value.thinkingLevel)) {
+    return `${fieldName}.thinkingLevel must be a non-empty string`;
+  }
+  return null;
 }
 
 function isNonEmptyString(value: unknown): value is string {

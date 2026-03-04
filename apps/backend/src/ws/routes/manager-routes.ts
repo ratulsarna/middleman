@@ -117,7 +117,11 @@ export async function handleManagerCommand(context: ManagerCommandRouteContext):
         provider: command.provider,
         modelId: command.modelId,
         thinkingLevel: command.thinkingLevel,
-        promptOverride: command.promptOverride
+        promptOverride: command.promptOverride,
+        spawnDefaultProvider: command.spawnDefaultProvider,
+        spawnDefaultModelId: command.spawnDefaultModelId,
+        spawnDefaultThinkingLevel: command.spawnDefaultThinkingLevel,
+        clearSpawnDefault: command.clearSpawnDefault,
       });
 
       broadcastToSubscribed({

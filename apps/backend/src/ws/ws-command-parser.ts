@@ -180,8 +180,13 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     const modelId = (maybe as { modelId?: unknown }).modelId;
     const thinkingLevel = (maybe as { thinkingLevel?: unknown }).thinkingLevel;
     const promptOverride = (maybe as { promptOverride?: unknown }).promptOverride;
+    const spawnDefaultProvider = (maybe as { spawnDefaultProvider?: unknown }).spawnDefaultProvider;
+    const spawnDefaultModelId = (maybe as { spawnDefaultModelId?: unknown }).spawnDefaultModelId;
+    const spawnDefaultThinkingLevel = (maybe as { spawnDefaultThinkingLevel?: unknown }).spawnDefaultThinkingLevel;
+    const clearSpawnDefault = (maybe as { clearSpawnDefault?: unknown }).clearSpawnDefault;
     const requestId = (maybe as { requestId?: unknown }).requestId;
     const hasExplicitDescriptorField = provider !== undefined || modelId !== undefined;
+    const hasSpawnDefaultDescriptorField = spawnDefaultProvider !== undefined || spawnDefaultModelId !== undefined;
 
     if (typeof managerId !== "string" || managerId.trim().length === 0) {
       return { ok: false, error: "update_manager.managerId must be a non-empty string" };
@@ -219,17 +224,54 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
     if (promptOverride !== undefined && typeof promptOverride !== "string") {
       return { ok: false, error: "update_manager.promptOverride must be a string when provided" };
     }
+    if (clearSpawnDefault !== undefined && typeof clearSpawnDefault !== "boolean") {
+      return { ok: false, error: "update_manager.clearSpawnDefault must be a boolean when provided" };
+    }
+    if (clearSpawnDefault && hasSpawnDefaultDescriptorField) {
+      return {
+        ok: false,
+        error: "update_manager.clearSpawnDefault cannot be combined with update_manager.spawnDefaultProvider or update_manager.spawnDefaultModelId"
+      };
+    }
+    if (spawnDefaultProvider !== undefined && (typeof spawnDefaultProvider !== "string" || spawnDefaultProvider.trim().length === 0)) {
+      return { ok: false, error: "update_manager.spawnDefaultProvider must be a non-empty string when provided" };
+    }
+    if (spawnDefaultModelId !== undefined && (typeof spawnDefaultModelId !== "string" || spawnDefaultModelId.trim().length === 0)) {
+      return { ok: false, error: "update_manager.spawnDefaultModelId must be a non-empty string when provided" };
+    }
+    if (hasSpawnDefaultDescriptorField && (spawnDefaultProvider === undefined || spawnDefaultModelId === undefined)) {
+      return {
+        ok: false,
+        error: "update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId are required together"
+      };
+    }
+    if (spawnDefaultThinkingLevel !== undefined && !isThinkingLevel(spawnDefaultThinkingLevel)) {
+      return {
+        ok: false,
+        error: `update_manager.spawnDefaultThinkingLevel must be one of ${describeThinkingLevels()}`
+      };
+    }
+    if (spawnDefaultThinkingLevel !== undefined && !hasSpawnDefaultDescriptorField) {
+      return {
+        ok: false,
+        error: "update_manager.spawnDefaultThinkingLevel requires update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId"
+      };
+    }
     if (requestId !== undefined && typeof requestId !== "string") {
       return { ok: false, error: "update_manager.requestId must be a string when provided" };
     }
-    if (!hasExplicitDescriptorField && model === undefined && thinkingLevel === undefined && promptOverride === undefined) {
+    if (
+      !hasExplicitDescriptorField && model === undefined && thinkingLevel === undefined &&
+      promptOverride === undefined && !hasSpawnDefaultDescriptorField && !clearSpawnDefault
+    ) {
       return {
         ok: false,
-        error: "update_manager must include at least one of model|thinkingLevel|promptOverride"
+        error: "update_manager must include at least one of model|thinkingLevel|promptOverride|spawnDefault*|clearSpawnDefault"
       };
     }
 
     const normalizedThinkingLevel = thinkingLevel as ThinkingLevel | undefined;
+    const normalizedSpawnDefaultThinkingLevel = spawnDefaultThinkingLevel as ThinkingLevel | undefined;
 
     return {
       ok: true,
@@ -241,6 +283,10 @@ export function parseClientCommand(raw: RawData): ParsedClientCommand {
         modelId: typeof modelId === "string" ? modelId.trim() : undefined,
         thinkingLevel: normalizedThinkingLevel,
         promptOverride,
+        spawnDefaultProvider: typeof spawnDefaultProvider === "string" ? spawnDefaultProvider.trim() : undefined,
+        spawnDefaultModelId: typeof spawnDefaultModelId === "string" ? spawnDefaultModelId.trim() : undefined,
+        spawnDefaultThinkingLevel: normalizedSpawnDefaultThinkingLevel,
+        clearSpawnDefault: clearSpawnDefault === true ? true : undefined,
         requestId
       }
     };

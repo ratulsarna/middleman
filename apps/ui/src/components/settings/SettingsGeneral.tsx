@@ -20,13 +20,21 @@ import {
   createEmptyCreateManagerCatalog,
   fetchManagerModelCatalog,
   getCatalogProviderLabel,
+  getCatalogAllowedThinkingLevels,
+  getCatalogDefaultModelForProvider,
+  getCatalogDefaultThinkingLevel,
+  getCatalogModelOptions,
+  getCatalogProviderOptions,
+  getDefaultCatalogSelection,
   getManagerSettingsAllowedThinkingLevels,
   getManagerSettingsDefaultModelForProvider,
   getManagerSettingsDefaultThinkingLevel,
   getManagerSettingsModelOptions,
   getManagerSettingsProviderOptions,
+  isCatalogDescriptorSupported,
   isSupportedManagerSettingsDescriptor,
   toManagerSettingsCatalog,
+  toSpawnDefaultCatalog,
 } from '@/lib/manager-model-catalog-api'
 import type { UpdateManagerInput, UpdateManagerResult } from '@/lib/ws-client'
 import type { AgentDescriptor, ThinkingLevel } from '@nexus/protocol'
@@ -44,6 +52,12 @@ interface ManagerRuntimeDraft {
   modelId: string
   thinkingLevel: ThinkingLevel
   promptOverride: string
+}
+
+interface SpawnDefaultDraft {
+  provider: string
+  modelId: string
+  thinkingLevel: ThinkingLevel
 }
 
 const NO_OUTPUT_STYLE_VALUE = '__none__'
@@ -82,6 +96,18 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
   const selectedRuntimeManagerIdRef = useRef('')
   selectedRuntimeManagerIdRef.current = selectedRuntimeManagerId
 
+  const [selectedSpawnManagerId, setSelectedSpawnManagerId] = useState('')
+  const [spawnCatalog, setSpawnCatalog] = useState(createEmptyCreateManagerCatalog)
+  const [spawnDraft, setSpawnDraft] = useState<SpawnDefaultDraft | null>(null)
+  const [spawnSelectionHint, setSpawnSelectionHint] = useState<string | null>(null)
+  const [spawnSaveError, setSpawnSaveError] = useState<string | null>(null)
+  const [spawnSaveSuccess, setSpawnSaveSuccess] = useState<string | null>(null)
+  const [isSavingSpawnSettings, setIsSavingSpawnSettings] = useState(false)
+  const spawnSaveRequestIdRef = useRef(0)
+  const previousSpawnManagerIdRef = useRef<string>('')
+  const selectedSpawnManagerIdRef = useRef('')
+  selectedSpawnManagerIdRef.current = selectedSpawnManagerId
+
   const [selectedClaudeManagerId, setSelectedClaudeManagerId] = useState<string>('')
   const [claudeOutputStyleState, setClaudeOutputStyleState] = useState<ClaudeOutputStyleState | null>(null)
   const [isLoadingClaudeOutputStyle, setIsLoadingClaudeOutputStyle] = useState(false)
@@ -97,6 +123,16 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
 
   useEffect(() => {
     setSelectedRuntimeManagerId((current) => {
+      if (current && managerOptions.some((manager) => manager.agentId === current)) {
+        return current
+      }
+
+      return managerOptions[0]?.agentId ?? ''
+    })
+  }, [managerOptions])
+
+  useEffect(() => {
+    setSelectedSpawnManagerId((current) => {
       if (current && managerOptions.some((manager) => manager.agentId === current)) {
         return current
       }
@@ -130,6 +166,60 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
     setRuntimeDraft(toManagerRuntimeDraft(selectedRuntimeManager))
   }, [selectedRuntimeManager])
 
+  const selectedSpawnManager = useMemo(
+    () => managerOptions.find((manager) => manager.agentId === selectedSpawnManagerId) ?? null,
+    [managerOptions, selectedSpawnManagerId],
+  )
+
+  const isSpawnDefaultSet = Boolean(selectedSpawnManager?.spawnDefaultModel)
+
+  useEffect(() => {
+    const nextManagerId = selectedSpawnManager?.agentId ?? ''
+    const managerChanged = previousSpawnManagerIdRef.current !== nextManagerId
+
+    if (managerChanged) {
+      previousSpawnManagerIdRef.current = nextManagerId
+      setIsSavingSpawnSettings(false)
+      setSpawnSelectionHint(null)
+      setSpawnSaveError(null)
+      setSpawnSaveSuccess(null)
+    }
+
+    if (!selectedSpawnManager) {
+      if (managerChanged) {
+        setSpawnDraft(null)
+      }
+      return
+    }
+
+    if (selectedSpawnManager.spawnDefaultModel) {
+      if (managerChanged) {
+        setSpawnDraft({
+          provider: selectedSpawnManager.spawnDefaultModel.provider,
+          modelId: selectedSpawnManager.spawnDefaultModel.modelId,
+          thinkingLevel: selectedSpawnManager.spawnDefaultModel.thinkingLevel,
+        })
+      }
+      return
+    }
+
+    // No spawn default set — fill from catalog defaults on manager change or catalog load.
+    setSpawnDraft((current) => {
+      if (current !== null && !managerChanged) {
+        return current
+      }
+      const defaultSelection = getDefaultCatalogSelection(spawnCatalog)
+      if (defaultSelection) {
+        return {
+          provider: defaultSelection.provider,
+          modelId: defaultSelection.modelId,
+          thinkingLevel: defaultSelection.thinkingLevel,
+        }
+      }
+      return null
+    })
+  }, [selectedSpawnManager, spawnCatalog])
+
   useEffect(() => {
     const requestId = ++runtimeCatalogRequestIdRef.current
     setIsLoadingRuntimeCatalog(true)
@@ -144,6 +234,7 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
 
         const nextCatalog = toManagerSettingsCatalog(response)
         setRuntimeCatalog(nextCatalog)
+        setSpawnCatalog(toSpawnDefaultCatalog(response))
         if (nextCatalog.providers.length === 0) {
           setRuntimeCatalogError('No runtime model options are available right now.')
         }
@@ -153,6 +244,7 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
         }
 
         setRuntimeCatalog(createEmptyCreateManagerCatalog())
+        setSpawnCatalog(createEmptyCreateManagerCatalog())
         setRuntimeCatalogError(toErrorMessage(error))
       } finally {
         if (requestId === runtimeCatalogRequestIdRef.current) {
@@ -214,6 +306,59 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
 
     return [...allowedThinkingLevels, runtimeDraft.thinkingLevel]
   }, [runtimeCatalog, runtimeDraft])
+
+  const spawnProviderOptions = useMemo(() => {
+    const options = getCatalogProviderOptions(spawnCatalog)
+    const currentProvider = spawnDraft?.provider
+    if (!currentProvider || options.some((option) => option.value === currentProvider)) {
+      return options
+    }
+
+    return [
+      ...options,
+      {
+        value: currentProvider,
+        label: `${getCatalogProviderLabel(spawnCatalog, currentProvider)} (unsupported)`,
+      },
+    ]
+  }, [spawnCatalog, spawnDraft?.provider])
+
+  const spawnModelOptions = useMemo(() => {
+    if (!spawnDraft) {
+      return []
+    }
+
+    const options = getCatalogModelOptions(spawnCatalog, spawnDraft.provider)
+    if (options.some((option) => option.value === spawnDraft.modelId)) {
+      return options
+    }
+
+    return [
+      ...options,
+      {
+        value: spawnDraft.modelId,
+        label: `${spawnDraft.modelId} (unsupported)`,
+      },
+    ]
+  }, [spawnCatalog, spawnDraft?.provider, spawnDraft?.modelId])
+
+  const spawnThinkingOptions = useMemo(() => {
+    if (!spawnDraft) {
+      return []
+    }
+
+    const allowedThinkingLevels = getCatalogAllowedThinkingLevels(
+      spawnCatalog,
+      spawnDraft.provider,
+      spawnDraft.modelId,
+    )
+
+    if (allowedThinkingLevels.includes(spawnDraft.thinkingLevel)) {
+      return allowedThinkingLevels
+    }
+
+    return [...allowedThinkingLevels, spawnDraft.thinkingLevel]
+  }, [spawnCatalog, spawnDraft?.provider, spawnDraft?.modelId, spawnDraft?.thinkingLevel])
 
   const resetRuntimeFeedback = useCallback(() => {
     setRuntimeSaveError(null)
@@ -309,6 +454,101 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
       }
     })
   }, [resetRuntimeFeedback])
+
+  const resetSpawnFeedback = useCallback(() => {
+    setSpawnSaveError(null)
+    setSpawnSaveSuccess(null)
+    setSpawnSelectionHint(null)
+  }, [])
+
+  const handleSpawnProviderChange = useCallback((nextProvider: string) => {
+    setSpawnDraft((current) => {
+      if (!current) {
+        return current
+      }
+
+      resetSpawnFeedback()
+
+      const nextModelId =
+        getCatalogDefaultModelForProvider(spawnCatalog, nextProvider) ??
+        getCatalogModelOptions(spawnCatalog, nextProvider)[0]?.value ??
+        current.modelId
+      const shouldResetModel = nextModelId !== current.modelId
+
+      const nextThinkingOptions = getCatalogAllowedThinkingLevels(spawnCatalog, nextProvider, nextModelId)
+      const defaultThinkingLevel = getCatalogDefaultThinkingLevel(spawnCatalog, nextProvider, nextModelId)
+      const fallbackThinkingLevel =
+        (defaultThinkingLevel && nextThinkingOptions.includes(defaultThinkingLevel)
+          ? defaultThinkingLevel
+          : nextThinkingOptions[0]) ?? current.thinkingLevel
+
+      const nextThinkingLevel = nextThinkingOptions.includes(current.thinkingLevel)
+        ? current.thinkingLevel
+        : fallbackThinkingLevel
+      const shouldResetThinking = nextThinkingLevel !== current.thinkingLevel
+
+      if (shouldResetModel && shouldResetThinking) {
+        setSpawnSelectionHint('Model and thinking were reset for the selected provider.')
+      } else if (shouldResetModel) {
+        setSpawnSelectionHint('Model was reset for the selected provider.')
+      } else if (shouldResetThinking) {
+        setSpawnSelectionHint('Thinking was reset for the selected provider.')
+      }
+
+      return {
+        ...current,
+        provider: nextProvider,
+        modelId: nextModelId,
+        thinkingLevel: nextThinkingLevel,
+      }
+    })
+  }, [resetSpawnFeedback, spawnCatalog])
+
+  const handleSpawnModelChange = useCallback((nextModelId: string) => {
+    setSpawnDraft((current) => {
+      if (!current) {
+        return current
+      }
+
+      resetSpawnFeedback()
+
+      const nextThinkingOptions = getCatalogAllowedThinkingLevels(spawnCatalog, current.provider, nextModelId)
+      const defaultThinkingLevel = getCatalogDefaultThinkingLevel(spawnCatalog, current.provider, nextModelId)
+      const fallbackThinkingLevel =
+        (defaultThinkingLevel && nextThinkingOptions.includes(defaultThinkingLevel)
+          ? defaultThinkingLevel
+          : nextThinkingOptions[0]) ?? current.thinkingLevel
+
+      const nextThinkingLevel = nextThinkingOptions.includes(current.thinkingLevel)
+        ? current.thinkingLevel
+        : fallbackThinkingLevel
+
+      if (nextThinkingLevel !== current.thinkingLevel) {
+        setSpawnSelectionHint('Thinking was reset for the selected model.')
+      }
+
+      return {
+        ...current,
+        modelId: nextModelId,
+        thinkingLevel: nextThinkingLevel,
+      }
+    })
+  }, [resetSpawnFeedback, spawnCatalog])
+
+  const handleSpawnThinkingChange = useCallback((nextThinkingLevel: ThinkingLevel) => {
+    setSpawnDraft((current) => {
+      if (!current) {
+        return current
+      }
+
+      resetSpawnFeedback()
+
+      return {
+        ...current,
+        thinkingLevel: nextThinkingLevel,
+      }
+    })
+  }, [resetSpawnFeedback])
 
   const handleRuntimePromptOverrideChange = useCallback((nextPromptOverride: string) => {
     setRuntimeDraft((current) => {
@@ -436,6 +676,148 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
       }
     }
   }, [isLoadingRuntimeCatalog, onUpdateManager, runtimeCatalog, runtimeDraft, selectedRuntimeManager])
+
+  const handleSaveSpawnDefault = useCallback(async () => {
+    if (!selectedSpawnManager || !spawnDraft) {
+      return
+    }
+
+    if (!spawnDraft.provider || !spawnDraft.modelId || !spawnDraft.thinkingLevel) {
+      setSpawnSaveError('Provider, model, and thinking are required.')
+      setSpawnSaveSuccess(null)
+      return
+    }
+
+    if (isLoadingRuntimeCatalog) {
+      setSpawnSaveError('Model catalog is still loading. Please wait.')
+      setSpawnSaveSuccess(null)
+      return
+    }
+
+    const descriptorSupported = isCatalogDescriptorSupported(
+      spawnCatalog,
+      spawnDraft.provider,
+      spawnDraft.modelId,
+    )
+
+    if (!descriptorSupported) {
+      setSpawnSaveError('Select a supported provider and model combination before saving.')
+      setSpawnSaveSuccess(null)
+      return
+    }
+
+    const allowedThinkingLevels = getCatalogAllowedThinkingLevels(
+      spawnCatalog,
+      spawnDraft.provider,
+      spawnDraft.modelId,
+    )
+    if (!allowedThinkingLevels.includes(spawnDraft.thinkingLevel)) {
+      setSpawnSaveError('Selected thinking level is not available for this model.')
+      setSpawnSaveSuccess(null)
+      return
+    }
+
+    const requestId = ++spawnSaveRequestIdRef.current
+    setIsSavingSpawnSettings(true)
+    setSpawnSaveError(null)
+    setSpawnSaveSuccess(null)
+
+    try {
+      const result = await onUpdateManager({
+        managerId: selectedSpawnManager.agentId,
+        spawnDefaultProvider: spawnDraft.provider,
+        spawnDefaultModelId: spawnDraft.modelId,
+        spawnDefaultThinkingLevel: spawnDraft.thinkingLevel,
+      })
+
+      if (
+        requestId !== spawnSaveRequestIdRef.current ||
+        selectedSpawnManager.agentId !== selectedSpawnManagerIdRef.current
+      ) {
+        return
+      }
+
+      if (result.manager.spawnDefaultModel) {
+        setSpawnDraft({
+          provider: result.manager.spawnDefaultModel.provider,
+          modelId: result.manager.spawnDefaultModel.modelId,
+          thinkingLevel: result.manager.spawnDefaultModel.thinkingLevel,
+        })
+      }
+      setSpawnSelectionHint(null)
+      setSpawnSaveSuccess('Worker spawn default saved.')
+    } catch (error) {
+      if (
+        requestId !== spawnSaveRequestIdRef.current ||
+        selectedSpawnManager.agentId !== selectedSpawnManagerIdRef.current
+      ) {
+        return
+      }
+
+      setSpawnSaveError(toErrorMessage(error))
+    } finally {
+      if (
+        requestId === spawnSaveRequestIdRef.current &&
+        selectedSpawnManager.agentId === selectedSpawnManagerIdRef.current
+      ) {
+        setIsSavingSpawnSettings(false)
+      }
+    }
+  }, [isLoadingRuntimeCatalog, onUpdateManager, spawnCatalog, spawnDraft, selectedSpawnManager])
+
+  const handleClearSpawnDefault = useCallback(async () => {
+    if (!selectedSpawnManager) {
+      return
+    }
+
+    const requestId = ++spawnSaveRequestIdRef.current
+    setIsSavingSpawnSettings(true)
+    setSpawnSaveError(null)
+    setSpawnSaveSuccess(null)
+
+    try {
+      await onUpdateManager({
+        managerId: selectedSpawnManager.agentId,
+        clearSpawnDefault: true,
+      })
+
+      if (
+        requestId !== spawnSaveRequestIdRef.current ||
+        selectedSpawnManager.agentId !== selectedSpawnManagerIdRef.current
+      ) {
+        return
+      }
+
+      const defaultSelection = getDefaultCatalogSelection(spawnCatalog)
+      if (defaultSelection) {
+        setSpawnDraft({
+          provider: defaultSelection.provider,
+          modelId: defaultSelection.modelId,
+          thinkingLevel: defaultSelection.thinkingLevel,
+        })
+      } else {
+        setSpawnDraft(null)
+      }
+      setSpawnSelectionHint(null)
+      setSpawnSaveSuccess('Worker spawn default cleared.')
+    } catch (error) {
+      if (
+        requestId !== spawnSaveRequestIdRef.current ||
+        selectedSpawnManager.agentId !== selectedSpawnManagerIdRef.current
+      ) {
+        return
+      }
+
+      setSpawnSaveError(toErrorMessage(error))
+    } finally {
+      if (
+        requestId === spawnSaveRequestIdRef.current &&
+        selectedSpawnManager.agentId === selectedSpawnManagerIdRef.current
+      ) {
+        setIsSavingSpawnSettings(false)
+      }
+    }
+  }, [onUpdateManager, selectedSpawnManager, spawnCatalog])
 
   const claudeManagers = useMemo(
     () =>
@@ -791,6 +1173,171 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
               <div className="flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2">
                 <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
                 <p className="text-xs text-emerald-600 dark:text-emerald-400">{runtimeSaveSuccess}</p>
+              </div>
+            ) : null}
+          </>
+        )}
+      </SettingsSection>
+
+      <SettingsSection
+        label="Worker Spawn Defaults"
+        description="Configure the default model for worker agents spawned by a manager. When not set, workers inherit the manager's runtime model."
+      >
+        {managerOptions.length === 0 ? (
+          <SettingsWithCTA
+            label="Manager"
+            description="No managers are available."
+          >
+            <span className="text-xs text-muted-foreground">Create a manager to configure spawn defaults.</span>
+          </SettingsWithCTA>
+        ) : (
+          <>
+            <SettingsWithCTA
+              label="Manager"
+              description="Choose which manager to configure"
+            >
+              <Select
+                value={selectedSpawnManagerId}
+                onValueChange={(value) => {
+                  setSelectedSpawnManagerId(value)
+                }}
+                disabled={isSavingSpawnSettings}
+              >
+                <SelectTrigger aria-label="Spawn default manager" className="w-full sm:w-72">
+                  <SelectValue placeholder="Select manager" />
+                </SelectTrigger>
+                <SelectContent>
+                  {managerOptions.map((manager) => (
+                    <SelectItem key={manager.agentId} value={manager.agentId}>
+                      {manager.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsWithCTA>
+
+            <SettingsWithCTA
+              label="Provider"
+              description="Choose the provider for spawned workers"
+            >
+              <Select
+                value={spawnDraft?.provider ?? ''}
+                onValueChange={handleSpawnProviderChange}
+                disabled={isSavingSpawnSettings || isLoadingRuntimeCatalog || !spawnDraft || spawnProviderOptions.length === 0}
+              >
+                <SelectTrigger aria-label="Spawn default provider" className="w-full sm:w-72">
+                  <SelectValue placeholder="Select provider" />
+                </SelectTrigger>
+                <SelectContent>
+                  {spawnProviderOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsWithCTA>
+
+            <SettingsWithCTA
+              label="Model"
+              description="Available models depend on selected provider"
+            >
+              <Select
+                value={spawnDraft?.modelId ?? ''}
+                onValueChange={handleSpawnModelChange}
+                disabled={isSavingSpawnSettings || isLoadingRuntimeCatalog || !spawnDraft || spawnModelOptions.length === 0}
+              >
+                <SelectTrigger aria-label="Spawn default model" className="w-full sm:w-72">
+                  <SelectValue placeholder="Select model" />
+                </SelectTrigger>
+                <SelectContent>
+                  {spawnModelOptions.map((option) => (
+                    <SelectItem key={`${spawnDraft?.provider ?? 'provider'}:${option.value}`} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsWithCTA>
+
+            <SettingsWithCTA
+              label="Thinking"
+              description="Available levels depend on selected provider and model"
+            >
+              <Select
+                value={spawnDraft?.thinkingLevel ?? ''}
+                onValueChange={(value) => handleSpawnThinkingChange(value as ThinkingLevel)}
+                disabled={isSavingSpawnSettings || isLoadingRuntimeCatalog || !spawnDraft || spawnThinkingOptions.length === 0}
+              >
+                <SelectTrigger aria-label="Spawn default thinking" className="w-full sm:w-72">
+                  <SelectValue placeholder="Select thinking" />
+                </SelectTrigger>
+                <SelectContent>
+                  {spawnThinkingOptions.map((thinkingLevel) => (
+                    <SelectItem key={thinkingLevel} value={thinkingLevel}>
+                      {thinkingLevel}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </SettingsWithCTA>
+
+            <div className="flex justify-end gap-2">
+              {isSpawnDefaultSet ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={!spawnDraft || isSavingSpawnSettings}
+                  onClick={() => {
+                    void handleClearSpawnDefault()
+                  }}
+                >
+                  Clear default
+                </Button>
+              ) : null}
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={!spawnDraft || isSavingSpawnSettings || isLoadingRuntimeCatalog}
+                onClick={() => {
+                  void handleSaveSpawnDefault()
+                }}
+              >
+                {isSavingSpawnSettings ? 'Saving...' : 'Save spawn default'}
+              </Button>
+            </div>
+
+            {spawnSelectionHint ? (
+              <p className="text-[11px] text-muted-foreground">{spawnSelectionHint}</p>
+            ) : null}
+
+            {isLoadingRuntimeCatalog ? (
+              <p className="text-[11px] text-muted-foreground">Loading model catalog...</p>
+            ) : null}
+
+            {!isLoadingRuntimeCatalog && spawnProviderOptions.length === 0 ? (
+              <p className="text-[11px] text-muted-foreground">
+                No spawn model options are available right now.
+              </p>
+            ) : null}
+
+            {!isLoadingRuntimeCatalog && spawnCatalog.warnings.length > 0 ? (
+              <p className="text-[11px] text-amber-700">
+                {spawnCatalog.warnings.join(' ')}
+              </p>
+            ) : null}
+
+            {spawnSaveError ? (
+              <div className="flex items-center gap-2 rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2">
+                <AlertTriangle className="size-3.5 shrink-0 text-destructive" />
+                <p className="text-xs text-destructive">{spawnSaveError}</p>
+              </div>
+            ) : null}
+
+            {spawnSaveSuccess ? (
+              <div className="flex items-center gap-2 rounded-md border border-emerald-500/20 bg-emerald-500/10 px-3 py-2">
+                <Check className="size-3.5 shrink-0 text-emerald-600 dark:text-emerald-400" />
+                <p className="text-xs text-emerald-600 dark:text-emerald-400">{spawnSaveSuccess}</p>
               </div>
             ) : null}
           </>

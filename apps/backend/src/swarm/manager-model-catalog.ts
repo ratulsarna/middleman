@@ -92,25 +92,25 @@ export class ManagerModelCatalogService {
       {
         provider: "openai-codex",
         providerLabel: "OpenAI Codex",
-        surfaces: ["create_manager", "manager_settings"],
+        surfaces: ["create_manager", "manager_settings", "spawn_default"],
         models: openAiCodexModels
       },
       {
         provider: "anthropic",
         providerLabel: "Anthropic",
-        surfaces: ["create_manager", "manager_settings"],
+        surfaces: ["create_manager", "manager_settings", "spawn_default"],
         models: anthropicModels
       },
       {
         provider: "claude-agent-sdk",
         providerLabel: "Claude Agent SDK",
-        surfaces: ["create_manager", "manager_settings"],
+        surfaces: ["create_manager", "manager_settings", "spawn_default"],
         models: anthropicModels.map(cloneCatalogModel)
       },
       {
         provider: CODEX_PROVIDER_ID,
         providerLabel: CODEX_PROVIDER_LABEL,
-        surfaces: ["manager_settings"],
+        surfaces: ["manager_settings", "spawn_default"],
         models: codexProviderModels.models
       }
     ];

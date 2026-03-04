@@ -2331,6 +2331,225 @@ describe('SwarmManager', () => {
     expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(3)
   })
 
+  it('sets spawnDefaultModel via update_manager with spawnDefaultProvider/ModelId/ThinkingLevel', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const updated = await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    expect(updated.resetApplied).toBe(false)
+    expect(updated.manager.spawnDefaultModel).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'low',
+    })
+  })
+
+  it('sets spawnDefaultModel without thinkingLevel, using model default', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const updated = await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+    })
+
+    expect(updated.resetApplied).toBe(false)
+    expect(updated.manager.spawnDefaultModel).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'xhigh',
+    })
+  })
+
+  it('clears spawnDefaultModel when clearSpawnDefault is true', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    const cleared = await manager.updateManager('manager', {
+      managerId: 'manager',
+      clearSpawnDefault: true,
+    })
+
+    expect(cleared.resetApplied).toBe(false)
+    expect(cleared.manager.spawnDefaultModel).toBeUndefined()
+  })
+
+  it('returns resetApplied=false when only spawn default changes', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const initialRuntime = manager.runtimeByAgentId.get('manager')
+    const createdBefore = manager.createdRuntimeIds.filter((id) => id === 'manager').length
+
+    const updated = await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    expect(updated.resetApplied).toBe(false)
+    expect(initialRuntime?.terminateCalls).toEqual([])
+    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(createdBefore)
+  })
+
+  it('preserves spawnDefaultModel when only manager model is updated', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'openai-codex',
+      spawnDefaultModelId: 'gpt-5.3-codex',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    const updated = await manager.updateManager('manager', {
+      managerId: 'manager',
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+    })
+
+    expect(updated.resetApplied).toBe(true)
+    expect(updated.manager.spawnDefaultModel).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'low',
+    })
+  })
+
+  it('rejects update_manager with spawnDefaultProvider but no spawnDefaultModelId', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateManager('manager', {
+        managerId: 'manager',
+        spawnDefaultProvider: 'anthropic',
+      }),
+    ).rejects.toThrow(
+      'update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId are required together',
+    )
+  })
+
+  it('rejects update_manager with spawnDefaultModelId but no spawnDefaultProvider', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateManager('manager', {
+        managerId: 'manager',
+        spawnDefaultModelId: 'claude-opus-4-6',
+      }),
+    ).rejects.toThrow(
+      'update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId are required together',
+    )
+  })
+
+  it('rejects update_manager with spawnDefaultThinkingLevel but no spawnDefaultProvider/ModelId', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateManager('manager', {
+        managerId: 'manager',
+        spawnDefaultThinkingLevel: 'low',
+      }),
+    ).rejects.toThrow(
+      'update_manager.spawnDefaultThinkingLevel requires update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId',
+    )
+  })
+
+  it('rejects update_manager with clearSpawnDefault combined with spawnDefaultProvider', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateManager('manager', {
+        managerId: 'manager',
+        clearSpawnDefault: true,
+        spawnDefaultProvider: 'anthropic',
+        spawnDefaultModelId: 'claude-opus-4-6',
+      }),
+    ).rejects.toThrow(
+      'update_manager.clearSpawnDefault cannot be combined with update_manager.spawnDefaultProvider or update_manager.spawnDefaultModelId',
+    )
+  })
+
+  it('rejects update_manager with empty/whitespace spawnDefaultProvider', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateManager('manager', {
+        managerId: 'manager',
+        spawnDefaultProvider: '  ',
+        spawnDefaultModelId: 'claude-opus-4-6',
+      }),
+    ).rejects.toThrow('update_manager.spawnDefaultProvider must be a non-empty string when provided')
+  })
+
+  it('rejects update_manager with empty/whitespace spawnDefaultModelId', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateManager('manager', {
+        managerId: 'manager',
+        spawnDefaultProvider: 'anthropic',
+        spawnDefaultModelId: '  ',
+      }),
+    ).rejects.toThrow('update_manager.spawnDefaultModelId must be a non-empty string when provided')
+  })
+
+  it('persists spawnDefaultModel across saveStore/loadStore', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    const rebooted = new TestSwarmManager(config)
+    await rebooted.boot()
+
+    const restoredManager = rebooted.getAgent('manager')
+    expect(restoredManager?.spawnDefaultModel).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'low',
+    })
+  })
+
   it('maps create_manager model presets to canonical runtime models with highest reasoning', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -2691,6 +2910,94 @@ describe('SwarmManager', () => {
         modelId: '  ',
       }),
     ).rejects.toThrow('spawn_agent.modelId must be a non-empty string when provided')
+  })
+
+  it('uses manager.model as spawn fallback when no spawn default is set', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const managerDescriptor = manager.getAgent('manager')
+    expect(managerDescriptor?.spawnDefaultModel).toBeUndefined()
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Fallback Worker',
+    })
+
+    expect(worker.model).toEqual(managerDescriptor?.model)
+  })
+
+  it('uses spawnDefaultModel as spawn fallback when set on manager', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Spawn Default Worker',
+    })
+
+    expect(worker.model).toEqual({
+      provider: 'anthropic',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'low',
+    })
+  })
+
+  it('LLM explicit model overrides spawn default', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'LLM Override Worker',
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'xhigh',
+    })
+
+    expect(worker.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'xhigh',
+    })
+  })
+
+  it('LLM explicit preset overrides spawn default', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await manager.updateManager('manager', {
+      managerId: 'manager',
+      spawnDefaultProvider: 'anthropic',
+      spawnDefaultModelId: 'claude-opus-4-6',
+      spawnDefaultThinkingLevel: 'low',
+    })
+
+    const worker = await manager.spawnAgent('manager', {
+      agentId: 'Preset Override Worker',
+      model: 'pi-codex',
+    })
+
+    expect(worker.model).toEqual({
+      provider: 'openai-codex',
+      modelId: 'gpt-5.3-codex',
+      thinkingLevel: 'xhigh',
+    })
   })
 
   it('allows deleting the default manager when requested', async () => {

@@ -1,6 +1,6 @@
 import type { ThinkingLevel } from './shared-types.js'
 
-export type ManagerModelSurface = 'create_manager' | 'manager_settings'
+export type ManagerModelSurface = 'create_manager' | 'manager_settings' | 'spawn_default'
 
 export interface ManagerModelCatalogModel {
   modelId: string

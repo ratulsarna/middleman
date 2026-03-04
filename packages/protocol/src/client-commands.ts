@@ -31,6 +31,10 @@ export type ClientCommand =
       modelId?: string
       thinkingLevel?: ThinkingLevel
       promptOverride?: string
+      spawnDefaultProvider?: string
+      spawnDefaultModelId?: string
+      spawnDefaultThinkingLevel?: ThinkingLevel
+      clearSpawnDefault?: boolean
       requestId?: string
     }
   | { type: 'list_directories'; path?: string; requestId?: string }

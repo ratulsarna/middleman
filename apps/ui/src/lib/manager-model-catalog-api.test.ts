@@ -2,13 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createEmptyCreateManagerCatalog,
   fetchManagerModelCatalog,
-  getCreateManagerAllowedThinkingLevels,
-  getCreateManagerDefaultModelForProvider,
-  getCreateManagerDefaultThinkingLevel,
-  getCreateManagerModelOptions,
-  getCreateManagerProviderOptions,
-  getDefaultCreateManagerSelection,
-  isCreateManagerDescriptorSupported,
+  getCatalogAllowedThinkingLevels,
+  getCatalogDefaultModelForProvider,
+  getCatalogDefaultThinkingLevel,
+  getCatalogModelOptions,
+  getCatalogProviderOptions,
+  getDefaultCatalogSelection,
+  isCatalogDescriptorSupported,
   toCreateManagerCatalog,
 } from './manager-model-catalog-api'
 
@@ -60,18 +60,18 @@ describe('manager-model-catalog-api', () => {
       warnings: ['warning-a', 'warning-a', ''],
     } as unknown as Parameters<typeof toCreateManagerCatalog>[0])
 
-    expect(getCreateManagerProviderOptions(catalog)).toEqual([
+    expect(getCatalogProviderOptions(catalog)).toEqual([
       { value: 'openai-codex', label: 'OpenAI Codex' },
     ])
-    expect(getCreateManagerModelOptions(catalog, 'openai-codex')).toEqual([
+    expect(getCatalogModelOptions(catalog, 'openai-codex')).toEqual([
       { value: 'gpt-5', label: 'GPT-5' },
     ])
-    expect(getCreateManagerAllowedThinkingLevels(catalog, 'openai-codex', 'gpt-5')).toEqual([
+    expect(getCatalogAllowedThinkingLevels(catalog, 'openai-codex', 'gpt-5')).toEqual([
       'off',
       'high',
       'xhigh',
     ])
-    expect(getCreateManagerDefaultThinkingLevel(catalog, 'openai-codex', 'gpt-5')).toBe('xhigh')
+    expect(getCatalogDefaultThinkingLevel(catalog, 'openai-codex', 'gpt-5')).toBe('xhigh')
     expect(catalog.warnings).toEqual(['warning-a'])
   })
 
@@ -94,8 +94,8 @@ describe('manager-model-catalog-api', () => {
     })
 
     expect(malformedCatalog).toEqual(createEmptyCreateManagerCatalog())
-    expect(getDefaultCreateManagerSelection(malformedCatalog)).toBeNull()
-    expect(isCreateManagerDescriptorSupported(malformedCatalog, 'anthropic', 'claude-opus')).toBe(false)
+    expect(getDefaultCatalogSelection(malformedCatalog)).toBeNull()
+    expect(isCatalogDescriptorSupported(malformedCatalog, 'anthropic', 'claude-opus')).toBe(false)
   })
 
   it('returns catalog defaults and descriptor support checks for valid data', () => {
@@ -124,14 +124,14 @@ describe('manager-model-catalog-api', () => {
       ],
     })
 
-    expect(getDefaultCreateManagerSelection(catalog)).toEqual({
+    expect(getDefaultCatalogSelection(catalog)).toEqual({
       provider: 'anthropic',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'high',
     })
-    expect(getCreateManagerDefaultModelForProvider(catalog, 'anthropic')).toBe('claude-opus-4-6')
-    expect(isCreateManagerDescriptorSupported(catalog, 'anthropic', 'claude-sonnet-4-5')).toBe(true)
-    expect(isCreateManagerDescriptorSupported(catalog, 'anthropic', 'missing')).toBe(false)
+    expect(getCatalogDefaultModelForProvider(catalog, 'anthropic')).toBe('claude-opus-4-6')
+    expect(isCatalogDescriptorSupported(catalog, 'anthropic', 'claude-sonnet-4-5')).toBe(true)
+    expect(isCatalogDescriptorSupported(catalog, 'anthropic', 'missing')).toBe(false)
   })
 
   it('surfaces non-ok and invalid fetch responses', async () => {

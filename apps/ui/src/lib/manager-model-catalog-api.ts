@@ -36,6 +36,7 @@ export interface CreateManagerSelectOption {
 
 const MANAGER_CREATE_SURFACE = 'create_manager'
 const MANAGER_SETTINGS_SURFACE = 'manager_settings'
+const SPAWN_DEFAULT_SURFACE = 'spawn_default'
 const THINKING_LEVEL_SET = new Set<string>(THINKING_LEVELS)
 
 export function createEmptyCreateManagerCatalog(): CreateManagerCatalog {
@@ -68,6 +69,10 @@ export function toManagerSettingsCatalog(response: ManagerModelCatalogResponse):
   return toCatalogForSurface(response, MANAGER_SETTINGS_SURFACE)
 }
 
+export function toSpawnDefaultCatalog(response: ManagerModelCatalogResponse): CreateManagerCatalog {
+  return toCatalogForSurface(response, SPAWN_DEFAULT_SURFACE)
+}
+
 export function getCatalogProviderLabel(
   catalog: CreateManagerCatalog,
   provider: string,
@@ -78,14 +83,14 @@ export function getCatalogProviderLabel(
 export function getManagerSettingsProviderOptions(
   catalog: CreateManagerCatalog,
 ): CreateManagerSelectOption[] {
-  return getCreateManagerProviderOptions(catalog)
+  return getCatalogProviderOptions(catalog)
 }
 
 export function getManagerSettingsModelOptions(
   catalog: CreateManagerCatalog,
   provider: string,
 ): CreateManagerSelectOption[] {
-  return getCreateManagerModelOptions(catalog, provider)
+  return getCatalogModelOptions(catalog, provider)
 }
 
 export function getManagerSettingsAllowedThinkingLevels(
@@ -93,14 +98,14 @@ export function getManagerSettingsAllowedThinkingLevels(
   provider: string,
   modelId: string,
 ): ThinkingLevel[] {
-  return getCreateManagerAllowedThinkingLevels(catalog, provider, modelId)
+  return getCatalogAllowedThinkingLevels(catalog, provider, modelId)
 }
 
 export function getManagerSettingsDefaultModelForProvider(
   catalog: CreateManagerCatalog,
   provider: string,
 ): string | undefined {
-  return getCreateManagerDefaultModelForProvider(catalog, provider)
+  return getCatalogDefaultModelForProvider(catalog, provider)
 }
 
 export function getManagerSettingsDefaultThinkingLevel(
@@ -108,7 +113,7 @@ export function getManagerSettingsDefaultThinkingLevel(
   provider: string,
   modelId: string,
 ): ThinkingLevel | undefined {
-  return getCreateManagerDefaultThinkingLevel(catalog, provider, modelId)
+  return getCatalogDefaultThinkingLevel(catalog, provider, modelId)
 }
 
 export function isSupportedManagerSettingsDescriptor(
@@ -116,7 +121,7 @@ export function isSupportedManagerSettingsDescriptor(
   provider: string,
   modelId: string,
 ): boolean {
-  return isCreateManagerDescriptorSupported(catalog, provider, modelId)
+  return isCatalogDescriptorSupported(catalog, provider, modelId)
 }
 
 function toCatalogForSurface(
@@ -169,7 +174,7 @@ function toCatalogForSurface(
   }
 }
 
-export function getDefaultCreateManagerSelection(catalog: CreateManagerCatalog): CreateManagerSelection | null {
+export function getDefaultCatalogSelection(catalog: CreateManagerCatalog): CreateManagerSelection | null {
   const firstProvider = catalog.providers[0]
   const firstModel = firstProvider?.models[0]
   if (!firstProvider || !firstModel) {
@@ -183,7 +188,7 @@ export function getDefaultCreateManagerSelection(catalog: CreateManagerCatalog):
   }
 }
 
-export function getCreateManagerProviderOptions(
+export function getCatalogProviderOptions(
   catalog: CreateManagerCatalog,
 ): CreateManagerSelectOption[] {
   return catalog.providers.map((provider) => ({
@@ -192,7 +197,7 @@ export function getCreateManagerProviderOptions(
   }))
 }
 
-export function getCreateManagerModelOptions(
+export function getCatalogModelOptions(
   catalog: CreateManagerCatalog,
   provider: string,
 ): CreateManagerSelectOption[] {
@@ -207,7 +212,7 @@ export function getCreateManagerModelOptions(
   }))
 }
 
-export function getCreateManagerAllowedThinkingLevels(
+export function getCatalogAllowedThinkingLevels(
   catalog: CreateManagerCatalog,
   provider: string,
   modelId: string,
@@ -220,14 +225,14 @@ export function getCreateManagerAllowedThinkingLevels(
   return [...model.allowedThinkingLevels]
 }
 
-export function getCreateManagerDefaultModelForProvider(
+export function getCatalogDefaultModelForProvider(
   catalog: CreateManagerCatalog,
   provider: string,
 ): string | undefined {
   return findProvider(catalog, provider)?.models[0]?.modelId
 }
 
-export function getCreateManagerDefaultThinkingLevel(
+export function getCatalogDefaultThinkingLevel(
   catalog: CreateManagerCatalog,
   provider: string,
   modelId: string,
@@ -235,7 +240,7 @@ export function getCreateManagerDefaultThinkingLevel(
   return findModel(catalog, provider, modelId)?.defaultThinkingLevel
 }
 
-export function isCreateManagerDescriptorSupported(
+export function isCatalogDescriptorSupported(
   catalog: CreateManagerCatalog,
   provider: string,
   modelId: string,

@@ -14,13 +14,13 @@ import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import {
   createEmptyCreateManagerCatalog,
   fetchManagerModelCatalog,
-  getCreateManagerAllowedThinkingLevels,
-  getCreateManagerDefaultModelForProvider,
-  getCreateManagerDefaultThinkingLevel,
-  getCreateManagerModelOptions,
-  getCreateManagerProviderOptions,
-  getDefaultCreateManagerSelection,
-  isCreateManagerDescriptorSupported,
+  getCatalogAllowedThinkingLevels,
+  getCatalogDefaultModelForProvider,
+  getCatalogDefaultThinkingLevel,
+  getCatalogModelOptions,
+  getCatalogProviderOptions,
+  getDefaultCatalogSelection,
+  isCatalogDescriptorSupported,
   toCreateManagerCatalog,
 } from '@/lib/manager-model-catalog-api'
 import { ManagerWsClient } from '@/lib/ws-client'
@@ -131,18 +131,18 @@ export function useManagerActions({
   }, [])
 
   const createManagerProviderOptions = useMemo(
-    () => getCreateManagerProviderOptions(createManagerCatalog),
+    () => getCatalogProviderOptions(createManagerCatalog),
     [createManagerCatalog],
   )
 
   const createManagerModelOptions = useMemo(
-    () => getCreateManagerModelOptions(createManagerCatalog, newManagerProvider),
+    () => getCatalogModelOptions(createManagerCatalog, newManagerProvider),
     [createManagerCatalog, newManagerProvider],
   )
 
   const createManagerThinkingOptions = useMemo(
     () =>
-      getCreateManagerAllowedThinkingLevels(createManagerCatalog, newManagerProvider, newManagerModelId).map(
+      getCatalogAllowedThinkingLevels(createManagerCatalog, newManagerProvider, newManagerModelId).map(
         (thinkingLevel) => ({
           value: thinkingLevel,
           label: thinkingLevel,
@@ -160,7 +160,7 @@ export function useManagerActions({
       return
     }
 
-    const defaultSelection = getDefaultCreateManagerSelection(createManagerCatalog)
+    const defaultSelection = getDefaultCatalogSelection(createManagerCatalog)
     if (!defaultSelection) {
       return
     }
@@ -180,11 +180,11 @@ export function useManagerActions({
       return false
     }
 
-    if (!isCreateManagerDescriptorSupported(createManagerCatalog, newManagerProvider, newManagerModelId)) {
+    if (!isCatalogDescriptorSupported(createManagerCatalog, newManagerProvider, newManagerModelId)) {
       return false
     }
 
-    const allowedThinkingLevels = getCreateManagerAllowedThinkingLevels(
+    const allowedThinkingLevels = getCatalogAllowedThinkingLevels(
       createManagerCatalog,
       newManagerProvider,
       newManagerModelId,
@@ -204,14 +204,14 @@ export function useManagerActions({
     setCreateManagerSelectionHint(null)
 
     const nextModelId =
-      getCreateManagerDefaultModelForProvider(createManagerCatalog, value) ??
-      getCreateManagerModelOptions(createManagerCatalog, value)[0]?.value ??
+      getCatalogDefaultModelForProvider(createManagerCatalog, value) ??
+      getCatalogModelOptions(createManagerCatalog, value)[0]?.value ??
       ''
     const shouldResetModel = nextModelId !== newManagerModelId
     setNewManagerModelId(nextModelId)
 
-    const nextThinkingOptions = getCreateManagerAllowedThinkingLevels(createManagerCatalog, value, nextModelId)
-    const defaultThinkingLevel = getCreateManagerDefaultThinkingLevel(createManagerCatalog, value, nextModelId)
+    const nextThinkingOptions = getCatalogAllowedThinkingLevels(createManagerCatalog, value, nextModelId)
+    const defaultThinkingLevel = getCatalogDefaultThinkingLevel(createManagerCatalog, value, nextModelId)
     const fallbackThinkingLevel =
       (defaultThinkingLevel && nextThinkingOptions.includes(defaultThinkingLevel)
         ? defaultThinkingLevel
@@ -242,18 +242,18 @@ export function useManagerActions({
     const normalizedModelId = value.trim()
     const nextModelId =
       normalizedModelId ||
-      getCreateManagerDefaultModelForProvider(createManagerCatalog, newManagerProvider) ||
+      getCatalogDefaultModelForProvider(createManagerCatalog, newManagerProvider) ||
       ''
     setNewManagerModelId(nextModelId)
     setCreateManagerError(null)
     setCreateManagerSelectionHint(null)
 
-    const nextThinkingOptions = getCreateManagerAllowedThinkingLevels(
+    const nextThinkingOptions = getCatalogAllowedThinkingLevels(
       createManagerCatalog,
       newManagerProvider,
       nextModelId,
     )
-    const defaultThinkingLevel = getCreateManagerDefaultThinkingLevel(
+    const defaultThinkingLevel = getCatalogDefaultThinkingLevel(
       createManagerCatalog,
       newManagerProvider,
       nextModelId,
@@ -449,12 +449,12 @@ export function useManagerActions({
       return
     }
 
-    if (!isCreateManagerDescriptorSupported(createManagerCatalog, newManagerProvider, newManagerModelId)) {
+    if (!isCatalogDescriptorSupported(createManagerCatalog, newManagerProvider, newManagerModelId)) {
       setCreateManagerError('Select a supported provider and model before creating.')
       return
     }
 
-    const allowedThinkingLevels = getCreateManagerAllowedThinkingLevels(
+    const allowedThinkingLevels = getCatalogAllowedThinkingLevels(
       createManagerCatalog,
       newManagerProvider,
       newManagerModelId,
