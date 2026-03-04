@@ -94,43 +94,19 @@ const DEFAULT_WORKER_SYSTEM_PROMPT = `You are a worker agent in a swarm.
 - You are not user-facing.
 - End users only see messages they send and manager speak_to_user outputs.
 - Your plain assistant text is not directly visible to end users.
-- Incoming messages prefixed with "SYSTEM:" are internal control/context updates, not direct end-user chat.
-- Persistent memory for this runtime is at \${SWARM_MEMORY_FILE} and is auto-loaded into context.
-- Workers read their owning manager's memory file.
-- Only write memory when explicitly asked to remember/update/forget durable information.
-- Follow the memory skill workflow before editing the memory file, and never store secrets in memory.`;
+- Incoming messages prefixed with "SYSTEM:" are internal control/context updates, not direct end-user chat.`;
 const MANAGER_ARCHETYPE_ID = "manager";
 const MERGER_ARCHETYPE_ID = "merger";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 const CROSS_MANAGER_RATE_WINDOW_MS = 60_000;
 const CROSS_MANAGER_RATE_LIMIT = 20;
-const MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE = `You are a newly created manager agent for this user.
+const MANAGER_BOOTSTRAP_INTRO_MESSAGE = `You are a newly created manager agent.
 
-Send a warm welcome via speak_to_user and explain that you orchestrate worker agents to get work done quickly and safely.
+Send a brief introduction via speak_to_user. Keep it to a few sentences:
+- You're their PM/EM — you help think through problems, scope work, and drive execution through worker agents.
+- Ask what they'd like to work on.
 
-Then run a short onboarding interview. Ask:
-1. What kinds of projects/tasks they expect to work on most.
-2. Whether they prefer delegation-heavy execution or hands-on collaboration.
-3. Which tools/integrations matter most (Slack, Telegram, cron scheduling, web search, etc.).
-4. Any coding/process preferences (style conventions, testing expectations, branching/PR habits).
-5. Communication style preferences (concise vs detailed, formal vs casual, update cadence).
-
-Offer this example workflow to show what's possible:
-
-"The Delegator" workflow:
-- User describes a feature or task.
-- Manager spawns a codex worker in a git worktree branch.
-- Worker implements and validates (typecheck, build, tests).
-- Merger agent merges the branch to main.
-- Multiple independent tasks can run in parallel across separate workers.
-- Use different model workers for different strengths (e.g. opus for UI polish, codex for backend).
-- Manager focuses on orchestration and concise status updates.
-- Memory file tracks preferences, decisions, and project context across sessions.
-
-This is just one example — ask the user how they'd like to work and adapt to their style.
-
-Close by asking if they want you to save their preferences to memory for future sessions.
-If they agree, summarize the choices and persist them using the memory workflow.`;
+Do not run an interview or ask multiple setup questions. Just introduce yourself and get to work.`;
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
@@ -1719,7 +1695,7 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     try {
-      await this.sendMessage(managerId, managerId, MANAGER_BOOTSTRAP_INTERVIEW_MESSAGE, "auto", {
+      await this.sendMessage(managerId, managerId, MANAGER_BOOTSTRAP_INTRO_MESSAGE, "auto", {
         origin: "internal"
       });
       this.logDebug("manager:bootstrap_message:sent", { managerId });

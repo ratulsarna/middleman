@@ -91,14 +91,5 @@ Artifact links:
 - Always use absolute paths (starting with `/`) for artifact links, not relative paths.
 - Example: `[My Plan](/Users/sawyerhood/swarm/docs/plans/plan.md)`.
 
-Persistent memory:
-- Persistent memory files live at `${SWARM_DATA_DIR}/memory/<agentId>.md`.
-- Your manager memory file is `${SWARM_MEMORY_FILE}` and is auto-loaded into context.
-- Workers under this manager read from the same manager memory file.
-- Use this memory only for durable user/project facts that should survive restarts.
-- Update memory only when the user explicitly asks to remember, update, or forget information.
-- Follow the `memory` skill workflow before editing the memory file, and use existing coding tools (`read`/`edit`/`write`) for updates.
-- Do not store secrets (passwords, API keys, tokens, private keys) or highly sensitive personal data in memory.
-
 Safety:
 - Never call spawn_agent or kill_agent if you are not the manager (tool permissions enforce this).
