@@ -340,12 +340,10 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
       }
     }
 
-    const abortController = new AbortController();
     const queryControl = this.createClaudeQuery({
       prompt: "Nexus output style metadata probe.",
       settingSources,
       auth,
-      abortController,
       attemptedResumeId: undefined,
       reasoning: {
         requestedThinking: "disabled",
@@ -364,9 +362,13 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
         availableStyles: normalizeOutputStyleMetadataList(initializationResult.available_output_styles)
       };
     } finally {
-      abortController.abort();
       try {
         await queryControl.interrupt();
+      } catch {
+        // Best-effort cleanup for metadata probe query.
+      }
+      try {
+        queryControl.close();
       } catch {
         // Best-effort cleanup for metadata probe query.
       }
@@ -932,7 +934,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     prompt: string;
     settingSources: SettingSource[];
     auth: AuthTokenResolution;
-    abortController: AbortController;
+    abortController?: AbortController;
     attemptedResumeId?: string;
     reasoning: ClaudeResolvedReasoningConfig;
     onStderr: (trimmed: string) => void;
@@ -951,7 +953,11 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
           [TOOL_MCP_SERVER_NAME]: this.sdkMcpServer
         },
         env: this.buildRuntimeEnv(options.auth),
-        abortController: options.abortController,
+        ...(options.abortController
+          ? {
+              abortController: options.abortController
+            }
+          : {}),
         thinking: options.reasoning.thinkingConfig,
         ...(options.reasoning.effectiveEffort
           ? {

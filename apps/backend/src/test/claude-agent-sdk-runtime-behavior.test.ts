@@ -10,6 +10,9 @@ import type { AgentDescriptor } from "../swarm/types.js";
 const sdkMockState = vi.hoisted(() => ({
   queryCalls: [] as Array<{ prompt: string; options?: Record<string, unknown> }>,
   streams: [] as Array<unknown[]>,
+  initializationResults: [] as unknown[],
+  interruptAbortedSignals: [] as boolean[],
+  interruptThrowsAbortWhenSignalAborted: false,
   mcpServerCalls: [] as Array<{ name: string; tools?: Array<{ inputSchema?: unknown }> }>,
   supportedModelsResponses: [] as unknown[],
   supportedModelsCallCount: 0
@@ -27,10 +30,22 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
   query: vi.fn((params: { prompt: string; options?: Record<string, unknown> }) => {
     sdkMockState.queryCalls.push(params);
     const messages = sdkMockState.streams.shift() ?? [];
+    const initializationResult = sdkMockState.initializationResults.shift();
 
     let isClosed = false;
 
     return {
+      async initializationResult() {
+        if (
+          initializationResult &&
+          typeof initializationResult === "object" &&
+          "__throw" in (initializationResult as Record<string, unknown>)
+        ) {
+          throw new Error(String((initializationResult as { __throw: unknown }).__throw));
+        }
+
+        return initializationResult ?? {};
+      },
       async supportedModels() {
         sdkMockState.supportedModelsCallCount += 1;
         const response = sdkMockState.supportedModelsResponses.shift();
@@ -76,6 +91,14 @@ vi.mock("@anthropic-ai/claude-agent-sdk", () => ({
         }
       },
       async interrupt() {
+        const abortController = params.options?.abortController as AbortController | undefined;
+        const aborted = Boolean(abortController?.signal.aborted);
+        sdkMockState.interruptAbortedSignals.push(aborted);
+        if (sdkMockState.interruptThrowsAbortWhenSignalAborted && aborted) {
+          const error = new Error("Operation aborted");
+          (error as Error & { name: string }).name = "AbortError";
+          throw error;
+        }
         isClosed = true;
       },
       close() {
@@ -149,6 +172,9 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
   afterEach(() => {
     sdkMockState.queryCalls = [];
     sdkMockState.streams = [];
+    sdkMockState.initializationResults = [];
+    sdkMockState.interruptAbortedSignals = [];
+    sdkMockState.interruptThrowsAbortWhenSignalAborted = false;
     sdkMockState.mcpServerCalls = [];
     sdkMockState.supportedModelsResponses = [];
     sdkMockState.supportedModelsCallCount = 0;
@@ -323,6 +349,47 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
     expect(env?.ANTHROPIC_API_KEY).toBeUndefined();
     expect(env?.ANTHROPIC_AUTH_TOKEN).toBeUndefined();
     expect(settingSources).toEqual(["project"]);
+
+    await runtime.terminate({ abort: true });
+  });
+
+  it("reads output-style metadata without pre-aborting the probe interrupt path", async () => {
+    sdkMockState.interruptThrowsAbortWhenSignalAborted = true;
+    sdkMockState.initializationResults.push({
+      output_style: " concise ",
+      available_output_styles: ["concise", "detailed", "", "concise", null]
+    });
+
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "claude-refresh-token",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor: createDescriptor(rootDir),
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      systemPrompt: "You are a worker",
+      tools: [],
+      authFile
+    });
+
+    const metadata = await runtime.getClaudeOutputStyleMetadata();
+
+    expect(metadata).toEqual({
+      selectedStyle: "concise",
+      availableStyles: ["concise", "detailed"]
+    });
+    expect(sdkMockState.queryCalls).toHaveLength(1);
+    expect(sdkMockState.queryCalls[0]?.prompt).toBe("Nexus output style metadata probe.");
+    expect(sdkMockState.queryCalls[0]?.options?.abortController).toBeUndefined();
+    expect(sdkMockState.interruptAbortedSignals).toEqual([false]);
 
     await runtime.terminate({ abort: true });
   });
