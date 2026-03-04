@@ -123,22 +123,8 @@ export interface SwarmPaths {
   agentDir: string;
   managerAgentDir: string;
   repoArchetypesDir: string;
-  memoryDir: string;
-  memoryFile?: string;
-  repoMemorySkillFile: string;
   agentsStoreFile: string;
-  secretsFile: string;
   schedulesFile?: string;
-}
-
-export interface SkillEnvRequirement {
-  name: string;
-  description?: string;
-  required: boolean;
-  helpUrl?: string;
-  skillName: string;
-  isSet: boolean;
-  maskedValue?: string;
 }
 
 export type SettingsAuthProviderName = "anthropic" | "openai-codex" | "claude-agent-sdk";

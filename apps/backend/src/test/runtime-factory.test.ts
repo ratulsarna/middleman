@@ -114,20 +114,12 @@ function createFactory() {
     config,
     now: () => "2026-01-01T00:00:00.000Z",
     logDebug: () => {},
-    getMemoryRuntimeResources: async () => ({
-      memoryContextFile: {
-        path: "/tmp/swarm-data/memory/manager.md",
-        content: "Persist this context."
-      },
-      additionalSkillPaths: []
-    }),
     getSwarmContextFiles: async () => [
       {
         path: "/repo/.swarm/context.md",
         content: "Repository policy context."
       }
     ],
-    mergeRuntimeContextFiles: (baseAgentsFiles) => baseAgentsFiles,
     callbacks: {
       onStatusChange: async () => {},
       onSessionEvent: async () => {},
@@ -180,12 +172,10 @@ describe("RuntimeFactory", () => {
     expect(call.authFile).toBe("/tmp/swarm-data/auth/auth.json");
     expect(call.runtimeEnv).toMatchObject({
       SWARM_DATA_DIR: "/tmp/swarm-data",
-      SWARM_MEMORY_FILE: "/tmp/swarm-data/memory/manager.md",
       CLAUDE_CONFIG_DIR: "/tmp/swarm-data/claude-code"
     });
     expect(call.systemPrompt).toContain("Base system prompt");
     expect(call.systemPrompt).toContain("Repository policy context.");
-    expect(call.systemPrompt).toContain("Persist this context.");
     expect(call.thinkingLevelToConfig).toEqual({
       off: { thinking: "disabled" },
       minimal: { thinking: "enabled", effort: "low" },
@@ -244,7 +234,6 @@ describe("RuntimeFactory", () => {
     expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith("/tmp/project");
     expect(call.systemPrompt).not.toContain("Manager base system prompt");
     expect(call.systemPrompt).toContain("Repository policy context.");
-    expect(call.systemPrompt).toContain("Persist this context.");
   });
 
   it("suppresses manager base prompt when outputStyle exists only in .claude/settings.json", async () => {
@@ -280,7 +269,6 @@ describe("RuntimeFactory", () => {
       expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith(projectRoot);
       expect(call.systemPrompt).not.toContain("Manager base system prompt");
       expect(call.systemPrompt).toContain("Repository policy context.");
-      expect(call.systemPrompt).toContain("Persist this context.");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }
@@ -324,7 +312,6 @@ describe("RuntimeFactory", () => {
       expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith(projectRoot);
       expect(call.systemPrompt).toContain("Manager base system prompt");
       expect(call.systemPrompt).toContain("Repository policy context.");
-      expect(call.systemPrompt).toContain("Persist this context.");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
     }

@@ -146,15 +146,11 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
   const repoArchetypesDir = join(root, '.swarm', 'archetypes')
-  const memoryDir = join(dataDir, 'memory')
-  const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
 
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
   await mkdir(uploadsDir, { recursive: true })
   await mkdir(authDir, { recursive: true })
-  await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
   await mkdir(managerAgentDir, { recursive: true })
   await mkdir(repoArchetypesDir, { recursive: true })
@@ -184,11 +180,7 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
       agentDir,
       managerAgentDir,
       repoArchetypesDir,
-      memoryDir,
-      memoryFile,
-      repoMemorySkillFile,
       agentsStoreFile: join(swarmDir, 'agents.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
     },
   }
@@ -679,10 +671,7 @@ describe('SwarmWebSocketServer', () => {
     }
   })
 
-  it('manages skill env settings through REST endpoints', async () => {
-    const previousBraveApiKey = process.env.BRAVE_API_KEY
-    delete process.env.BRAVE_API_KEY
-
+  it('does not expose removed /api/settings/env endpoint', async () => {
     const port = await getAvailablePort()
     const config = await makeTempConfig(port)
 
@@ -699,77 +688,9 @@ describe('SwarmWebSocketServer', () => {
     await server.start()
 
     try {
-      const initialResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env`)
-      expect(initialResponse.status).toBe(200)
-      const initialPayload = (await initialResponse.json()) as {
-        variables: Array<{ name: string; skillName: string; isSet: boolean }>
-      }
-
-      expect(
-        initialPayload.variables.find(
-          (entry) => entry.name === 'BRAVE_API_KEY' && entry.skillName === 'brave-search',
-        ),
-      ).toMatchObject({
-        isSet: false,
-      })
-
-      const updateResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env`, {
-        method: 'PUT',
-        headers: {
-          'content-type': 'application/json',
-        },
-        body: JSON.stringify({
-          values: {
-            BRAVE_API_KEY: 'bsal-rest-value',
-          },
-        }),
-      })
-
-      expect(updateResponse.status).toBe(200)
-      const updatedPayload = (await updateResponse.json()) as {
-        variables: Array<{ name: string; skillName: string; isSet: boolean; maskedValue?: string }>
-      }
-
-      expect(
-        updatedPayload.variables.find(
-          (entry) => entry.name === 'BRAVE_API_KEY' && entry.skillName === 'brave-search',
-        ),
-      ).toMatchObject({
-        isSet: true,
-        maskedValue: '********',
-      })
-
-      expect(process.env.BRAVE_API_KEY).toBe('bsal-rest-value')
-
-      const storedSecrets = JSON.parse(await readFile(config.paths.secretsFile, 'utf8')) as Record<string, string>
-      expect(storedSecrets.BRAVE_API_KEY).toBe('bsal-rest-value')
-
-      const deleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env/BRAVE_API_KEY`, {
-        method: 'DELETE',
-      })
-
-      expect(deleteResponse.status).toBe(200)
-      expect(process.env.BRAVE_API_KEY).toBeUndefined()
-
-      const afterDeleteResponse = await fetch(`http://${config.host}:${config.port}/api/settings/env`)
-      const afterDeletePayload = (await afterDeleteResponse.json()) as {
-        variables: Array<{ name: string; skillName: string; isSet: boolean }>
-      }
-
-      expect(
-        afterDeletePayload.variables.find(
-          (entry) => entry.name === 'BRAVE_API_KEY' && entry.skillName === 'brave-search',
-        ),
-      ).toMatchObject({
-        isSet: false,
-      })
+      const response = await fetch(`http://${config.host}:${config.port}/api/settings/env`)
+      expect(response.status).toBe(404)
     } finally {
-      if (previousBraveApiKey === undefined) {
-        delete process.env.BRAVE_API_KEY
-      } else {
-        process.env.BRAVE_API_KEY = previousBraveApiKey
-      }
-
       await server.stop()
     }
   })

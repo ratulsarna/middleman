@@ -92,18 +92,6 @@ class TestSwarmManager extends SwarmManager {
   readonly createdRuntimeIds: string[] = []
   readonly systemPromptByAgentId = new Map<string, string>()
 
-  async getMemoryRuntimeResourcesForTest(agentId = 'manager'): Promise<{
-    memoryContextFile: { path: string; content: string }
-    additionalSkillPaths: string[]
-  }> {
-    const descriptor = this.getAgent(agentId)
-    if (!descriptor) {
-      throw new Error(`Unknown test agent: ${agentId}`)
-    }
-
-    return this.getMemoryRuntimeResources(descriptor)
-  }
-
   async getSwarmContextFilesForTest(cwd: string): Promise<Array<{ path: string; content: string }>> {
     return this.getSwarmContextFiles(cwd)
   }
@@ -176,15 +164,11 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
   const repoArchetypesDir = join(root, '.swarm', 'archetypes')
-  const memoryDir = join(dataDir, 'memory')
-  const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(root, '.swarm', 'skills', 'memory', 'SKILL.md')
 
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
   await mkdir(uploadsDir, { recursive: true })
   await mkdir(authDir, { recursive: true })
-  await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
   await mkdir(managerAgentDir, { recursive: true })
   await mkdir(repoArchetypesDir, { recursive: true })
@@ -214,11 +198,7 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
       agentDir,
       managerAgentDir,
       repoArchetypesDir,
-      memoryDir,
-      memoryFile,
-      repoMemorySkillFile,
       agentsStoreFile: join(swarmDir, 'agents.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, 'manager'),
     },
   }
@@ -241,7 +221,7 @@ async function bootWithDefaultManager(manager: TestSwarmManager, config: SwarmCo
     cwd: config.defaultCwd,
   })
 
-  // `createManager` sends an internal bootstrap message; clear fake runtime calls for deterministic assertions.
+  // Keep fake runtime calls deterministic across tests.
   const createdRuntime = manager.runtimeByAgentId.get(createdManager.agentId)
   if (createdRuntime) {
     createdRuntime.sendCalls = []
@@ -273,72 +253,6 @@ describe('SwarmManager', () => {
     await expect(readFile(join(config.paths.managerAgentDir, 'SYSTEM.md'), 'utf8')).rejects.toMatchObject({
       code: 'ENOENT',
     })
-  })
-
-  it('bootstraps manager memory file in dataDir/memory when missing', async () => {
-    const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
-
-    await manager.boot()
-
-    const memory = await readFile(config.paths.memoryFile!, 'utf8')
-    expect(memory).toContain('# Swarm Memory')
-    expect(memory).toContain('## User Preferences')
-  })
-
-  it('preserves existing manager memory content across restart', async () => {
-    const config = await makeTempConfig()
-
-    const firstBoot = new TestSwarmManager(config)
-    await bootWithDefaultManager(firstBoot, config)
-
-    const persistedMemory = '# Swarm Memory\n\n## Project Facts\n- remember me\n'
-    await writeFile(config.paths.memoryFile!, persistedMemory, 'utf8')
-
-    const secondBoot = new TestSwarmManager(config)
-    await bootWithDefaultManager(secondBoot, config)
-
-    const memory = await readFile(config.paths.memoryFile!, 'utf8')
-    expect(memory).toBe(persistedMemory)
-
-    const resources = await secondBoot.getMemoryRuntimeResourcesForTest()
-    expect(resources.memoryContextFile.content).toBe(persistedMemory)
-  })
-
-  it('does not migrate legacy global MEMORY.md into manager memory on boot', async () => {
-    const config = await makeTempConfig()
-    const legacyMemoryFile = join(config.paths.dataDir, 'MEMORY.md')
-    const legacyContent = '# Swarm Memory\n\n## Project Facts\n- migrated legacy memory\n'
-
-    await writeFile(legacyMemoryFile, legacyContent, 'utf8')
-
-    const manager = new TestSwarmManager(config)
-    await manager.boot()
-
-    const managerMemory = await readFile(config.paths.memoryFile!, 'utf8')
-    expect(managerMemory).toContain('# Swarm Memory')
-    expect(managerMemory).not.toBe(legacyContent)
-
-    await expect(readFile(join(config.paths.memoryDir, '.migrated'), 'utf8')).rejects.toMatchObject({
-      code: 'ENOENT',
-    })
-  })
-
-  it('workers load their owning manager memory file', async () => {
-    const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const worker = await manager.spawnAgent('manager', { agentId: 'Memory Worker' })
-    const workerMemoryFile = join(config.paths.memoryDir, `${worker.agentId}.md`)
-
-    await writeFile(config.paths.memoryFile!, '# Swarm Memory\n\n## Decisions\n- manager memory\n', 'utf8')
-    await writeFile(workerMemoryFile, '# Swarm Memory\n\n## Decisions\n- worker memory\n', 'utf8')
-
-    const resources = await manager.getMemoryRuntimeResourcesForTest(worker.agentId)
-    expect(resources.memoryContextFile.path).toBe(config.paths.memoryFile!)
-    expect(resources.memoryContextFile.content).toContain('manager memory')
-    expect(resources.memoryContextFile.content).not.toContain('worker memory')
   })
 
   it('loads SWARM.md context files from the cwd ancestor chain', async () => {
@@ -382,10 +296,9 @@ describe('SwarmManager', () => {
     await bootWithDefaultManager(manager, config)
 
     const managerPrompt = manager.systemPromptByAgentId.get('manager')
-    expect(managerPrompt).toContain('You are the manager agent in a multi-agent swarm.')
+    expect(managerPrompt).toContain('You are a PM/EM (product-engineering manager) in a multi-agent swarm.')
     expect(managerPrompt).toContain('End users only see two things')
     expect(managerPrompt).toContain('prefixed with "SYSTEM:"')
-    expect(managerPrompt).toContain('Your manager memory file is `${SWARM_MEMORY_FILE}`')
 
     const worker = await manager.spawnAgent('manager', { agentId: 'Prompt Worker' })
     const workerPrompt = manager.systemPromptByAgentId.get(worker.agentId)
@@ -393,193 +306,6 @@ describe('SwarmManager', () => {
     expect(workerPrompt).toBeDefined()
     expect(workerPrompt).toContain('End users only see messages they send and manager speak_to_user outputs.')
     expect(workerPrompt).toContain('Incoming messages prefixed with "SYSTEM:"')
-    expect(workerPrompt).toContain('Persistent memory for this runtime is at ${SWARM_MEMORY_FILE}')
-    expect(workerPrompt).toContain('Workers read their owning manager\'s memory file.')
-    expect(workerPrompt).toContain('Follow the memory skill workflow before editing the memory file')
-  })
-
-  it('auto-loads per-runtime memory context and wires built-in memory + brave-search + cron-scheduling + agent-browser + image-generation skills', async () => {
-    const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const persistedMemory = '# Swarm Memory\n\n## Project Facts\n- release train: friday\n'
-    await writeFile(config.paths.memoryFile!, persistedMemory, 'utf8')
-
-    const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.memoryContextFile.path).toBe(config.paths.memoryFile!)
-    expect(resources.memoryContextFile.content).toBe(persistedMemory)
-    expect(resources.additionalSkillPaths).toHaveLength(5)
-
-    const memorySkill = await readFile(resources.additionalSkillPaths[0], 'utf8')
-    expect(memorySkill).toContain('name: memory')
-    expect(memorySkill).toContain('In this runtime, use `${SWARM_MEMORY_FILE}`')
-
-    const braveSkill = await readFile(resources.additionalSkillPaths[1], 'utf8')
-    expect(braveSkill).toContain('name: brave-search')
-    expect(braveSkill).toContain('BRAVE_API_KEY')
-
-    const cronSkill = await readFile(resources.additionalSkillPaths[2], 'utf8')
-    expect(cronSkill).toContain('name: cron-scheduling')
-    expect(cronSkill).toContain('schedule.js add')
-
-    const agentBrowserSkill = await readFile(resources.additionalSkillPaths[3], 'utf8')
-    expect(agentBrowserSkill).toContain('name: agent-browser')
-    expect(agentBrowserSkill).toContain('agent-browser snapshot -i --json')
-
-    const imageGenerationSkill = await readFile(resources.additionalSkillPaths[4], 'utf8')
-    expect(imageGenerationSkill).toContain('name: image-generation')
-    expect(imageGenerationSkill).toContain('GEMINI_API_KEY')
-
-  })
-
-  it('loads skill env requirements and persists secrets to the settings store', async () => {
-    const previousBraveApiKey = process.env.BRAVE_API_KEY
-    const previousGeminiApiKey = process.env.GEMINI_API_KEY
-    delete process.env.BRAVE_API_KEY
-    delete process.env.GEMINI_API_KEY
-
-    try {
-      const config = await makeTempConfig()
-      const manager = new TestSwarmManager(config)
-      await manager.boot()
-
-      const initial = await manager.listSettingsEnv()
-      const braveRequirement = initial.find(
-        (requirement) => requirement.name === 'BRAVE_API_KEY' && requirement.skillName === 'brave-search',
-      )
-      const geminiRequirement = initial.find(
-        (requirement) => requirement.name === 'GEMINI_API_KEY' && requirement.skillName === 'image-generation',
-      )
-
-      expect(braveRequirement).toMatchObject({
-        description: 'Brave Search API key',
-        required: true,
-        helpUrl: 'https://api-dashboard.search.brave.com/register',
-        isSet: false,
-      })
-      expect(geminiRequirement).toMatchObject({
-        description: 'Google AI Studio / Gemini API key',
-        required: true,
-        isSet: false,
-      })
-
-      await manager.updateSettingsEnv({ BRAVE_API_KEY: 'bsal-test-value' })
-
-      const secretsRaw = await readFile(config.paths.secretsFile, 'utf8')
-      expect(JSON.parse(secretsRaw)).toEqual({ BRAVE_API_KEY: 'bsal-test-value' })
-      expect(process.env.BRAVE_API_KEY).toBe('bsal-test-value')
-
-      const afterUpdate = await manager.listSettingsEnv()
-      expect(
-        afterUpdate.find(
-          (requirement) => requirement.name === 'BRAVE_API_KEY' && requirement.skillName === 'brave-search',
-        ),
-      ).toMatchObject({
-        isSet: true,
-        maskedValue: '********',
-      })
-
-      await manager.deleteSettingsEnv('BRAVE_API_KEY')
-
-      const afterDelete = await manager.listSettingsEnv()
-      expect(
-        afterDelete.find(
-          (requirement) => requirement.name === 'BRAVE_API_KEY' && requirement.skillName === 'brave-search',
-        ),
-      ).toMatchObject({
-        isSet: false,
-      })
-      expect(process.env.BRAVE_API_KEY).toBeUndefined()
-    } finally {
-      if (previousBraveApiKey === undefined) {
-        delete process.env.BRAVE_API_KEY
-      } else {
-        process.env.BRAVE_API_KEY = previousBraveApiKey
-      }
-
-      if (previousGeminiApiKey === undefined) {
-        delete process.env.GEMINI_API_KEY
-      } else {
-        process.env.GEMINI_API_KEY = previousGeminiApiKey
-      }
-    }
-  })
-
-  it('restores existing process env values when deleting a secret override', async () => {
-    const previousBraveApiKey = process.env.BRAVE_API_KEY
-    process.env.BRAVE_API_KEY = 'fallback-value'
-
-    try {
-      const config = await makeTempConfig()
-      await writeFile(config.paths.secretsFile, JSON.stringify({ BRAVE_API_KEY: 'override-value' }, null, 2), 'utf8')
-
-      const manager = new TestSwarmManager(config)
-      await manager.boot()
-
-      expect(process.env.BRAVE_API_KEY).toBe('override-value')
-
-      await manager.deleteSettingsEnv('BRAVE_API_KEY')
-      expect(process.env.BRAVE_API_KEY).toBe('fallback-value')
-    } finally {
-      if (previousBraveApiKey === undefined) {
-        delete process.env.BRAVE_API_KEY
-      } else {
-        process.env.BRAVE_API_KEY = previousBraveApiKey
-      }
-    }
-  })
-
-  it('prefers repo memory skill override when present', async () => {
-    const config = await makeTempConfig()
-    await mkdir(join(config.paths.rootDir, '.swarm', 'skills', 'memory'), { recursive: true })
-    await writeFile(
-      config.paths.repoMemorySkillFile,
-      ['---', 'name: memory', 'description: Repo override memory workflow.', '---', '', '# Repo memory override', ''].join('\n'),
-      'utf8',
-    )
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths).toHaveLength(5)
-    expect(resources.additionalSkillPaths[0]).toBe(config.paths.repoMemorySkillFile)
-    expect(resources.additionalSkillPaths[1].endsWith(join('brave-search', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[2].endsWith(join('cron-scheduling', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[3].endsWith(join('agent-browser', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[4].endsWith(join('image-generation', 'SKILL.md'))).toBe(true)
-  })
-
-  it('prefers repo brave-search skill override when present', async () => {
-    const config = await makeTempConfig()
-    const repoBraveSkillFile = join(config.paths.rootDir, '.swarm', 'skills', 'brave-search', 'SKILL.md')
-
-    await mkdir(join(config.paths.rootDir, '.swarm', 'skills', 'brave-search'), { recursive: true })
-    await writeFile(
-      repoBraveSkillFile,
-      [
-        '---',
-        'name: brave-search',
-        'description: Repo override brave-search workflow.',
-        '---',
-        '',
-        '# Repo brave-search override',
-        '',
-      ].join('\n'),
-      'utf8',
-    )
-
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const resources = await manager.getMemoryRuntimeResourcesForTest()
-    expect(resources.additionalSkillPaths).toHaveLength(5)
-    expect(resources.additionalSkillPaths[0].endsWith(join('memory', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[1]).toBe(repoBraveSkillFile)
-    expect(resources.additionalSkillPaths[2].endsWith(join('cron-scheduling', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[3].endsWith(join('agent-browser', 'SKILL.md'))).toBe(true)
-    expect(resources.additionalSkillPaths[4].endsWith(join('image-generation', 'SKILL.md'))).toBe(true)
   })
 
   it('uses repo manager archetype overrides on boot', async () => {
@@ -606,7 +332,6 @@ describe('SwarmManager', () => {
     const mergerPrompt = manager.systemPromptByAgentId.get(merger.agentId)
     expect(mergerPrompt).toContain('You are the merger agent in a multi-agent swarm.')
     expect(mergerPrompt).toContain('Own branch integration and merge execution tasks.')
-    expect(mergerPrompt).toContain('This runtime memory file is `${SWARM_MEMORY_FILE}`')
   })
 
   it('applies deterministic merger archetype mapping for merger-* worker ids', async () => {
@@ -2326,7 +2051,7 @@ describe('SwarmManager', () => {
     expect(cleared.resetApplied).toBe(true)
     expect(cleared.manager.promptOverride).toBeUndefined()
     expect(manager.systemPromptByAgentId.get('manager')).toContain(
-      'You are the manager agent in a multi-agent swarm.',
+      'You are a PM/EM (product-engineering manager) in a multi-agent swarm.',
     )
     expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(3)
   })

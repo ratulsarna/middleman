@@ -10,11 +10,9 @@ import {
   type ArchetypePromptRegistry
 } from "./archetypes/archetype-prompt-registry.js";
 import { ConversationProjector } from "./conversation-projector.js";
-import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
 import { PersistenceService } from "./persistence-service.js";
 import { RuntimeFactory } from "./runtime-factory.js";
 import { SecretsEnvService } from "./secrets-env-service.js";
-import { SkillMetadataService } from "./skill-metadata-service.js";
 import {
   listDirectories,
   normalizeAllowlistRoots,
@@ -79,7 +77,6 @@ import type {
   RequestedDeliveryMode,
   SendMessageReceipt,
   SettingsAuthProvider,
-  SkillEnvRequirement,
   SpawnAgentInput,
   SwarmConfig,
   SwarmModelPresetDefinitions,
@@ -100,13 +97,6 @@ const MERGER_ARCHETYPE_ID = "merger";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 const CROSS_MANAGER_RATE_WINDOW_MS = 60_000;
 const CROSS_MANAGER_RATE_LIMIT = 20;
-const MANAGER_BOOTSTRAP_INTRO_MESSAGE = `You are a newly created manager agent.
-
-Send a brief introduction via speak_to_user. Keep it to a few sentences:
-- You're their PM/EM — you help think through problems, scope work, and drive execution through worker agents.
-- Ask what they'd like to work on.
-
-Do not run an interview or ask multiple setup questions. Just introduce yourself and get to work.`;
 // Retain recent non-web activity while preserving the full user-facing web transcript.
 const SWARM_CONTEXT_FILE_NAME = "SWARM.md";
 const SWARM_MANAGER_MAX_EVENT_LISTENERS = 64;
@@ -210,7 +200,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
   private readonly conversationProjector: ConversationProjector;
   private readonly persistenceService: PersistenceService;
   private readonly runtimeFactory: RuntimeFactory;
-  private readonly skillMetadataService: SkillMetadataService;
   private readonly secretsEnvService: SecretsEnvService;
 
   private archetypePromptRegistry: ArchetypePromptRegistry = createEmptyArchetypePromptRegistry();
@@ -237,8 +226,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       config: this.config,
       descriptors: this.descriptors,
       sortedDescriptors: () => this.sortedDescriptors(),
-      getConfiguredManagerId: () => this.getConfiguredManagerId(),
-      resolveMemoryOwnerAgentId: (descriptor) => this.resolveMemoryOwnerAgentId(descriptor),
       validateAgentDescriptor,
       extractDescriptorAgentId,
       logDebug: (message, details) => this.logDebug(message, details)
@@ -253,23 +240,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       },
       logDebug: (message, details) => this.logDebug(message, details)
     });
-    this.skillMetadataService = new SkillMetadataService({
-      config: this.config
-    });
     this.secretsEnvService = new SecretsEnvService({
-      config: this.config,
-      ensureSkillMetadataLoaded: () => this.skillMetadataService.ensureSkillMetadataLoaded(),
-      getSkillMetadata: () => this.skillMetadataService.getSkillMetadata()
+      config: this.config
     });
     this.runtimeFactory = new RuntimeFactory({
       host: this,
       config: this.config,
       now: this.now,
       logDebug: (message, details) => this.logDebug(message, details),
-      getMemoryRuntimeResources: async (descriptor) => this.getMemoryRuntimeResources(descriptor),
       getSwarmContextFiles: async (cwd) => this.getSwarmContextFiles(cwd),
-      mergeRuntimeContextFiles: (baseAgentsFiles, options) =>
-        this.mergeRuntimeContextFiles(baseAgentsFiles, options),
       callbacks: {
         onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
           await this.handleRuntimeStatus(agentId, status, pendingCount, contextUsage);
@@ -297,8 +276,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     });
 
     await this.ensureDirectories();
-    await this.loadSecretsStore();
-    await this.reloadSkillMetadata();
 
     try {
       this.config.defaultCwd = await this.resolveAndValidateCwd(this.config.defaultCwd);
@@ -319,7 +296,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
     this.normalizeStreamingStatusesForBoot();
 
-    await this.ensureMemoryFilesForBoot();
     await this.saveStore();
 
     this.loadConversationHistoriesFromStore();
@@ -646,8 +622,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       managerId,
       cwd: descriptor.cwd
     });
-
-    await this.sendManagerBootstrapMessage(managerId);
 
     return cloneDescriptor(descriptor);
   }
@@ -1553,18 +1527,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     return this.config;
   }
 
-  async listSettingsEnv(): Promise<SkillEnvRequirement[]> {
-    return this.secretsEnvService.listSettingsEnv();
-  }
-
-  async updateSettingsEnv(values: Record<string, string>): Promise<void> {
-    await this.secretsEnvService.updateSettingsEnv(values);
-  }
-
-  async deleteSettingsEnv(name: string): Promise<void> {
-    await this.secretsEnvService.deleteSettingsEnv(name);
-  }
-
   async listSettingsAuth(): Promise<SettingsAuthProvider[]> {
     return this.secretsEnvService.listSettingsAuth();
   }
@@ -1678,33 +1640,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
       return a.agentId.localeCompare(b.agentId);
     });
-  }
-
-  private async sendManagerBootstrapMessage(managerId: string): Promise<void> {
-    const manager = this.descriptors.get(managerId);
-    if (!manager || manager.role !== "manager") {
-      return;
-    }
-
-    if (isNonRunningAgentStatus(manager.status)) {
-      return;
-    }
-
-    if (!this.runtimes.has(managerId)) {
-      return;
-    }
-
-    try {
-      await this.sendMessage(managerId, managerId, MANAGER_BOOTSTRAP_INTRO_MESSAGE, "auto", {
-        origin: "internal"
-      });
-      this.logDebug("manager:bootstrap_message:sent", { managerId });
-    } catch (error) {
-      this.logDebug("manager:bootstrap_message:error", {
-        managerId,
-        message: error instanceof Error ? error.message : String(error)
-      });
-    }
   }
 
   private normalizeStreamingStatusesForBoot(): void {
@@ -2108,37 +2043,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
   }
 
-  protected async getMemoryRuntimeResources(descriptor: AgentDescriptor): Promise<{
-    memoryContextFile: { path: string; content: string };
-    additionalSkillPaths: string[];
-  }> {
-    await this.ensureAgentMemoryFile(descriptor.agentId);
-
-    const memoryOwnerAgentId = this.resolveMemoryOwnerAgentId(descriptor);
-    const memoryFilePath = this.getAgentMemoryPath(memoryOwnerAgentId);
-    await this.ensureAgentMemoryFile(memoryOwnerAgentId);
-
-    await this.skillMetadataService.ensureSkillMetadataLoaded();
-
-    const memoryContextFile = {
-      path: memoryFilePath,
-      content: await readFile(memoryFilePath, "utf8")
-    };
-
-    return {
-      memoryContextFile,
-      additionalSkillPaths: this.skillMetadataService.getAdditionalSkillPaths()
-    };
-  }
-
-  private async reloadSkillMetadata(): Promise<void> {
-    await this.skillMetadataService.reloadSkillMetadata();
-  }
-
-  private async loadSecretsStore(): Promise<void> {
-    await this.secretsEnvService.loadSecretsStore();
-  }
-
   protected async getSwarmContextFiles(cwd: string): Promise<Array<{ path: string; content: string }>> {
     const contextFiles: Array<{ path: string; content: string }> = [];
     const seenPaths = new Set<string>();
@@ -2175,21 +2079,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     }
 
     return contextFiles;
-  }
-
-  private mergeRuntimeContextFiles(
-    baseAgentsFiles: Array<{ path: string; content: string }>,
-    options: {
-      memoryContextFile: { path: string; content: string };
-      swarmContextFiles: Array<{ path: string; content: string }>;
-    }
-  ): Array<{ path: string; content: string }> {
-    const swarmContextPaths = new Set(options.swarmContextFiles.map((entry) => entry.path));
-    const withoutSwarmAndMemory = baseAgentsFiles.filter(
-      (entry) => entry.path !== options.memoryContextFile.path && !swarmContextPaths.has(entry.path)
-    );
-
-    return [...withoutSwarmAndMemory, ...options.swarmContextFiles, options.memoryContextFile];
   }
 
   protected async createRuntimeForDescriptor(
@@ -2380,31 +2269,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
 
   private async ensureDirectories(): Promise<void> {
     await this.persistenceService.ensureDirectories();
-  }
-
-  private getAgentMemoryPath(agentId: string): string {
-    return getAgentMemoryPathForDataDir(this.config.paths.dataDir, agentId);
-  }
-
-  private resolveMemoryOwnerAgentId(descriptor: AgentDescriptor): string {
-    if (descriptor.role === "manager") {
-      return descriptor.agentId;
-    }
-
-    const managerId = normalizeOptionalAgentId(descriptor.managerId);
-    if (managerId) {
-      return managerId;
-    }
-
-    return this.resolvePreferredManagerId({ includeStoppedOnRestart: true }) ?? descriptor.agentId;
-  }
-
-  private async ensureMemoryFilesForBoot(): Promise<void> {
-    await this.persistenceService.ensureMemoryFilesForBoot();
-  }
-
-  private async ensureAgentMemoryFile(agentId: string): Promise<void> {
-    await this.persistenceService.ensureAgentMemoryFile(agentId);
   }
 
   private async deleteManagerSessionFile(sessionFile: string): Promise<void> {

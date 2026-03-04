@@ -18,7 +18,6 @@ import {
 } from "../http-utils.js";
 import type { HttpRoute } from "./http-route.js";
 
-const SETTINGS_ENV_ENDPOINT_PATH = "/api/settings/env";
 const SETTINGS_AUTH_ENDPOINT_PATH = "/api/settings/auth";
 const SETTINGS_AUTH_LOGIN_ENDPOINT_PATH = "/api/settings/auth/login";
 const SETTINGS_AUTH_LOGIN_METHODS = "POST, OPTIONS";
@@ -110,13 +109,6 @@ export function createSettingsRoutes(options: { swarmManager: SwarmManager }): S
 
   const routes: HttpRoute[] = [
     {
-      methods: "GET, PUT, DELETE, OPTIONS",
-      matches: (pathname) => pathname === SETTINGS_ENV_ENDPOINT_PATH || pathname.startsWith(`${SETTINGS_ENV_ENDPOINT_PATH}/`),
-      handle: async (request, response, requestUrl) => {
-        await handleSettingsEnvHttpRequest(swarmManager, request, response, requestUrl);
-      }
-    },
-    {
       methods: SETTINGS_AUTH_METHODS,
       matches: (pathname) =>
         pathname === SETTINGS_AUTH_ENDPOINT_PATH || pathname.startsWith(`${SETTINGS_AUTH_ENDPOINT_PATH}/`),
@@ -147,56 +139,6 @@ export function createSettingsRoutes(options: { swarmManager: SwarmManager }): S
       activeSettingsAuthLoginFlows.clear();
     }
   };
-}
-
-async function handleSettingsEnvHttpRequest(
-  swarmManager: SwarmManager,
-  request: IncomingMessage,
-  response: ServerResponse,
-  requestUrl: URL
-): Promise<void> {
-  const methods = "GET, PUT, DELETE, OPTIONS";
-
-  if (request.method === "OPTIONS") {
-    applyCorsHeaders(request, response, methods);
-    response.statusCode = 204;
-    response.end();
-    return;
-  }
-
-  if (request.method === "GET" && requestUrl.pathname === SETTINGS_ENV_ENDPOINT_PATH) {
-    applyCorsHeaders(request, response, methods);
-    const variables = await swarmManager.listSettingsEnv();
-    sendJson(response, 200, { variables });
-    return;
-  }
-
-  if (request.method === "PUT" && requestUrl.pathname === SETTINGS_ENV_ENDPOINT_PATH) {
-    applyCorsHeaders(request, response, methods);
-    const payload = parseSettingsEnvUpdateBody(await readJsonBody(request));
-    await swarmManager.updateSettingsEnv(payload);
-    const variables = await swarmManager.listSettingsEnv();
-    sendJson(response, 200, { ok: true, variables });
-    return;
-  }
-
-  if (request.method === "DELETE" && requestUrl.pathname.startsWith(`${SETTINGS_ENV_ENDPOINT_PATH}/`)) {
-    applyCorsHeaders(request, response, methods);
-    const variableName = decodeURIComponent(requestUrl.pathname.slice(SETTINGS_ENV_ENDPOINT_PATH.length + 1));
-    if (!variableName) {
-      sendJson(response, 400, { error: "Missing environment variable name" });
-      return;
-    }
-
-    await swarmManager.deleteSettingsEnv(variableName);
-    const variables = await swarmManager.listSettingsEnv();
-    sendJson(response, 200, { ok: true, variables });
-    return;
-  }
-
-  applyCorsHeaders(request, response, methods);
-  response.setHeader("Allow", methods);
-  sendJson(response, 405, { error: "Method Not Allowed" });
 }
 
 async function handleSettingsAuthHttpRequest(
@@ -488,34 +430,6 @@ async function handleSettingsAuthLoginHttpRequest(
       response.end();
     }
   }
-}
-
-function parseSettingsEnvUpdateBody(value: unknown): Record<string, string> {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("Request body must be a JSON object");
-  }
-
-  const maybeValues = "values" in value ? (value as { values?: unknown }).values : value;
-  if (!maybeValues || typeof maybeValues !== "object" || Array.isArray(maybeValues)) {
-    throw new Error("settings env payload must be an object map");
-  }
-
-  const updates: Record<string, string> = {};
-
-  for (const [name, rawValue] of Object.entries(maybeValues)) {
-    if (typeof rawValue !== "string") {
-      throw new Error(`settings env value for ${name} must be a string`);
-    }
-
-    const normalized = rawValue.trim();
-    if (!normalized) {
-      throw new Error(`settings env value for ${name} must be a non-empty string`);
-    }
-
-    updates[name] = normalized;
-  }
-
-  return updates;
 }
 
 function parseSettingsAuthUpdateBody(value: unknown): Record<string, string> {

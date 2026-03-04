@@ -105,15 +105,11 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
   const agentDir = join(dataDir, 'agent')
   const managerAgentDir = join(agentDir, 'manager')
   const repoArchetypesDir = join(rootDir, '.swarm', 'archetypes')
-  const memoryDir = join(dataDir, 'memory')
-  const memoryFile = join(memoryDir, 'manager.md')
-  const repoMemorySkillFile = join(rootDir, '.swarm', 'skills', 'memory', 'SKILL.md')
 
   await mkdir(swarmDir, { recursive: true })
   await mkdir(sessionsDir, { recursive: true })
   await mkdir(uploadsDir, { recursive: true })
   await mkdir(authDir, { recursive: true })
-  await mkdir(memoryDir, { recursive: true })
   await mkdir(agentDir, { recursive: true })
   await mkdir(managerAgentDir, { recursive: true })
   await mkdir(repoArchetypesDir, { recursive: true })
@@ -143,11 +139,7 @@ async function makeTempConfig(options?: { port?: number; managerId?: string }): 
       agentDir,
       managerAgentDir,
       repoArchetypesDir,
-      memoryDir,
-      memoryFile,
-      repoMemorySkillFile,
       agentsStoreFile: join(swarmDir, 'agents.json'),
-      secretsFile: join(dataDir, 'secrets.json'),
       schedulesFile: getScheduleFilePath(dataDir, options?.managerId ?? 'manager'),
     },
   }

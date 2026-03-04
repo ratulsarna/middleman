@@ -34,18 +34,7 @@ interface RuntimeFactoryDependencies {
   config: SwarmConfig;
   now: () => string;
   logDebug: (message: string, details?: unknown) => void;
-  getMemoryRuntimeResources: (descriptor: AgentDescriptor) => Promise<{
-    memoryContextFile: { path: string; content: string };
-    additionalSkillPaths: string[];
-  }>;
   getSwarmContextFiles: (cwd: string) => Promise<Array<{ path: string; content: string }>>;
-  mergeRuntimeContextFiles: (
-    baseAgentsFiles: Array<{ path: string; content: string }>,
-    options: {
-      memoryContextFile: { path: string; content: string };
-      swarmContextFiles: Array<{ path: string; content: string }>;
-    }
-  ) => Array<{ path: string; content: string }>;
   callbacks: {
     onStatusChange: (
       agentId: string,
@@ -85,7 +74,6 @@ export class RuntimeFactory {
     const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
     const runtimeAgentDir =
       descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
-    const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
 
     this.deps.logDebug("runtime:create:start", {
       runtime: "pi",
@@ -96,7 +84,6 @@ export class RuntimeFactory {
       cwd: descriptor.cwd,
       authFile: this.deps.config.paths.authFile,
       agentDir: runtimeAgentDir,
-      memoryFile: memoryResources.memoryContextFile.path,
       managerSystemPromptSource:
         descriptor.role === "manager" ? "archetype:manager" : undefined
     });
@@ -105,10 +92,7 @@ export class RuntimeFactory {
     const modelRegistry = new ModelRegistry(authStorage);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const applyRuntimeContext = (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({
-      agentsFiles: this.deps.mergeRuntimeContextFiles(base.agentsFiles, {
-        memoryContextFile: memoryResources.memoryContextFile,
-        swarmContextFiles
-      })
+      agentsFiles: this.mergeSwarmContextFiles(base.agentsFiles, swarmContextFiles)
     });
 
     const resourceLoader =
@@ -116,7 +100,6 @@ export class RuntimeFactory {
         ? new DefaultResourceLoader({
             cwd: descriptor.cwd,
             agentDir: runtimeAgentDir,
-            additionalSkillPaths: memoryResources.additionalSkillPaths,
             agentsFilesOverride: applyRuntimeContext,
             // Manager prompt comes from the archetype prompt registry.
             systemPrompt,
@@ -125,7 +108,6 @@ export class RuntimeFactory {
         : new DefaultResourceLoader({
             cwd: descriptor.cwd,
             agentDir: runtimeAgentDir,
-            additionalSkillPaths: memoryResources.additionalSkillPaths,
             agentsFilesOverride: applyRuntimeContext,
             appendSystemPromptOverride: (base) => [...base, systemPrompt]
           });
@@ -192,11 +174,9 @@ export class RuntimeFactory {
     systemPrompt: string
   ): Promise<SwarmAgentRuntime> {
     const swarmTools = buildSwarmTools(this.deps.host, descriptor);
-    const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
 
-    const codexSystemPrompt = this.buildCodexRuntimeSystemPrompt(systemPrompt, {
-      memoryContextFile: memoryResources.memoryContextFile,
+    const codexSystemPrompt = this.buildRuntimeSystemPrompt(systemPrompt, {
       swarmContextFiles
     });
 
@@ -229,8 +209,7 @@ export class RuntimeFactory {
       systemPrompt: codexSystemPrompt,
       tools: swarmTools,
       runtimeEnv: {
-        SWARM_DATA_DIR: this.deps.config.paths.dataDir,
-        SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path
+        SWARM_DATA_DIR: this.deps.config.paths.dataDir
       },
       thinkingLevelToEffort:
         this.deps.config.providerThinkingLevelMappings?.codexAppServer ??
@@ -252,14 +231,12 @@ export class RuntimeFactory {
     systemPrompt: string
   ): Promise<SwarmAgentRuntime> {
     const swarmTools = buildSwarmTools(this.deps.host, descriptor);
-    const memoryResources = await this.deps.getMemoryRuntimeResources(descriptor);
     const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
     const managerHasSelectedOutputStyle = await this.readManagerClaudeOutputStyleSelection(descriptor);
-    const claudeSystemPrompt = this.buildCodexRuntimeSystemPrompt(
+    const claudeSystemPrompt = this.buildRuntimeSystemPrompt(
       managerHasSelectedOutputStyle ? "" : systemPrompt,
       {
-      memoryContextFile: memoryResources.memoryContextFile,
-      swarmContextFiles
+        swarmContextFiles
       }
     );
 
@@ -295,7 +272,6 @@ export class RuntimeFactory {
       authFile: this.deps.config.paths.authFile,
       runtimeEnv: {
         SWARM_DATA_DIR: this.deps.config.paths.dataDir,
-        SWARM_MEMORY_FILE: memoryResources.memoryContextFile.path,
         CLAUDE_CONFIG_DIR: resolve(this.deps.config.paths.dataDir, "claude-code")
       },
       thinkingLevelToConfig:
@@ -318,10 +294,9 @@ export class RuntimeFactory {
     return runtime;
   }
 
-  private buildCodexRuntimeSystemPrompt(
+  private buildRuntimeSystemPrompt(
     baseSystemPrompt: string,
     options: {
-      memoryContextFile: { path: string; content: string };
       swarmContextFiles: Array<{ path: string; content: string }>;
     }
   ): string {
@@ -348,19 +323,17 @@ export class RuntimeFactory {
       );
     }
 
-    const memoryContent = options.memoryContextFile.content.trim();
-    if (memoryContent) {
-      sections.push(
-        [
-          `Persistent swarm memory (${options.memoryContextFile.path}):`,
-          "----- BEGIN SWARM MEMORY -----",
-          memoryContent,
-          "----- END SWARM MEMORY -----"
-        ].join("\n")
-      );
-    }
-
     return sections.join("\n\n");
+  }
+
+  private mergeSwarmContextFiles(
+    baseAgentsFiles: Array<{ path: string; content: string }>,
+    swarmContextFiles: Array<{ path: string; content: string }>
+  ): Array<{ path: string; content: string }> {
+    const swarmContextPaths = new Set(swarmContextFiles.map((entry) => entry.path));
+    const withoutSwarm = baseAgentsFiles.filter((entry) => !swarmContextPaths.has(entry.path));
+
+    return [...withoutSwarm, ...swarmContextFiles];
   }
 
   private async readManagerClaudeOutputStyleSelection(descriptor: AgentDescriptor): Promise<boolean> {

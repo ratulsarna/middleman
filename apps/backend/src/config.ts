@@ -2,7 +2,6 @@ import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { normalizeAllowlistRoots } from "./swarm/cwd-policy.js";
-import { getMemoryDirPath } from "./swarm/memory-paths.js";
 import {
   DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS,
   DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS
@@ -26,10 +25,6 @@ export function createConfig(): SwarmConfig {
   const agentDir = resolve(dataDir, "agent");
   const managerAgentDir = resolve(agentDir, "manager");
   const repoArchetypesDir = resolve(rootDir, ".swarm", "archetypes");
-  const memoryDir = getMemoryDirPath(dataDir);
-  const memoryFile = undefined;
-  const repoMemorySkillFile = resolve(rootDir, ".swarm", "skills", "memory", "SKILL.md");
-  const secretsFile = resolve(dataDir, "secrets.json");
   const defaultCwd = rootDir;
 
   const cwdAllowlistRoots = normalizeAllowlistRoots([
@@ -65,11 +60,7 @@ export function createConfig(): SwarmConfig {
       agentDir,
       managerAgentDir,
       repoArchetypesDir,
-      memoryDir,
-      memoryFile,
-      repoMemorySkillFile,
       agentsStoreFile: resolve(swarmDir, "agents.json"),
-      secretsFile,
       schedulesFile: undefined
     }
   };

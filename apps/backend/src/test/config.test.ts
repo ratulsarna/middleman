@@ -84,11 +84,7 @@ describe('createConfig', () => {
       expect(config.paths.authFile).toBe(resolve(homedir(), '.nexus', 'auth', 'auth.json'))
       expect(config.paths.managerAgentDir).toBe(resolve(homedir(), '.nexus', 'agent', 'manager'))
       expect(config.paths.repoArchetypesDir).toBe(resolve(config.paths.rootDir, '.swarm', 'archetypes'))
-      expect(config.paths.memoryDir).toBe(resolve(homedir(), '.nexus', 'memory'))
-      expect(config.paths.memoryFile).toBeUndefined()
-      expect(config.paths.repoMemorySkillFile).toBe(resolve(config.paths.rootDir, '.swarm', 'skills', 'memory', 'SKILL.md'))
       expect(config.paths.agentsStoreFile).toBe(resolve(homedir(), '.nexus', 'swarm', 'agents.json'))
-      expect(config.paths.secretsFile).toBe(resolve(homedir(), '.nexus', 'secrets.json'))
       expect(config.paths.schedulesFile).toBeUndefined()
 
       expect(config.defaultCwd).toBe(config.paths.rootDir)

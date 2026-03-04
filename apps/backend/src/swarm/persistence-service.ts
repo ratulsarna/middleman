@@ -1,30 +1,13 @@
 import { mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { getAgentMemoryPath as getAgentMemoryPathForDataDir } from "./memory-paths.js";
 import type { AgentDescriptor, AgentsStoreFile, SwarmConfig } from "./types.js";
 
-const DEFAULT_MEMORY_FILE_CONTENT = `# Swarm Memory
-
-## User Preferences
-- (none yet)
-
-## Project Facts
-- (none yet)
-
-## Decisions
-- (none yet)
-
-## Open Follow-ups
-- (none yet)
-`;
 const CLAUDE_RUNTIME_STATE_FILE_SUFFIX = ".claude-runtime-state.json";
 
 interface PersistenceServiceDependencies {
   config: SwarmConfig;
   descriptors: Map<string, AgentDescriptor>;
   sortedDescriptors: () => AgentDescriptor[];
-  getConfiguredManagerId: () => string | undefined;
-  resolveMemoryOwnerAgentId: (descriptor: AgentDescriptor) => string;
   validateAgentDescriptor: (value: unknown) => AgentDescriptor | string;
   extractDescriptorAgentId: (value: unknown) => string | undefined;
   logDebug: (message: string, details?: unknown) => void;
@@ -40,7 +23,6 @@ export class PersistenceService {
       this.deps.config.paths.sessionsDir,
       this.deps.config.paths.uploadsDir,
       this.deps.config.paths.authDir,
-      this.deps.config.paths.memoryDir,
       this.deps.config.paths.agentDir,
       this.deps.config.paths.managerAgentDir
     ];
@@ -48,41 +30,6 @@ export class PersistenceService {
     for (const dir of dirs) {
       await mkdir(dir, { recursive: true });
     }
-  }
-
-  async ensureMemoryFilesForBoot(): Promise<void> {
-    const memoryAgentIds = new Set<string>();
-    const configuredManagerId = this.deps.getConfiguredManagerId();
-    if (configuredManagerId) {
-      memoryAgentIds.add(configuredManagerId);
-    }
-
-    for (const descriptor of this.deps.descriptors.values()) {
-      memoryAgentIds.add(descriptor.agentId);
-      if (descriptor.role === "worker") {
-        memoryAgentIds.add(this.deps.resolveMemoryOwnerAgentId(descriptor));
-      }
-    }
-
-    for (const agentId of memoryAgentIds) {
-      await this.ensureAgentMemoryFile(agentId);
-    }
-  }
-
-  async ensureAgentMemoryFile(agentId: string): Promise<void> {
-    const memoryFilePath = this.getAgentMemoryPath(agentId);
-
-    try {
-      await readFile(memoryFilePath, "utf8");
-      return;
-    } catch (error) {
-      if (!isEnoentError(error)) {
-        throw error;
-      }
-    }
-
-    await mkdir(dirname(memoryFilePath), { recursive: true });
-    await writeFile(memoryFilePath, DEFAULT_MEMORY_FILE_CONTENT, "utf8");
   }
 
   async deleteManagerSessionFile(sessionFile: string): Promise<void> {
@@ -131,10 +78,6 @@ export class PersistenceService {
     await mkdir(dirname(target), { recursive: true });
     await writeFile(tmp, `${JSON.stringify(payload, null, 2)}\n`, "utf8");
     await rename(tmp, target);
-  }
-
-  private getAgentMemoryPath(agentId: string): string {
-    return getAgentMemoryPathForDataDir(this.deps.config.paths.dataDir, agentId);
   }
 
   private async deleteFileIfExists(path: string): Promise<void> {

@@ -11,7 +11,7 @@ describe('loadArchetypePromptRegistry', () => {
 
     const registry = await loadArchetypePromptRegistry({ repoOverridesDir })
 
-    expect(registry.resolvePrompt('manager')).toContain('You are the manager agent in a multi-agent swarm.')
+    expect(registry.resolvePrompt('manager')).toContain('You are a PM/EM (product-engineering manager) in a multi-agent swarm.')
     expect(registry.resolvePrompt('merger')).toContain('You are the merger agent in a multi-agent swarm.')
   })
 
