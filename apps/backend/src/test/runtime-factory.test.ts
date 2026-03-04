@@ -185,7 +185,7 @@ describe("RuntimeFactory", () => {
       xhigh: { thinking: "enabled", effort: "max" }
     });
     expect(call.settingsPolicy).toEqual({
-      primarySources: ["project"],
+      primarySources: ["local", "project"],
       fallbackSources: [],
       enableFallbackOnReadError: true
     });

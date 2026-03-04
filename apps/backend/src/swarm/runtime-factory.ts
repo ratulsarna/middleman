@@ -24,8 +24,8 @@ import type {
   SwarmConfig
 } from "./types.js";
 
-const CLAUDE_PROJECT_ONLY_SETTINGS_POLICY = Object.freeze({
-  primarySources: ["project"] as const,
+const CLAUDE_PROJECT_AND_LOCAL_SETTINGS_POLICY = Object.freeze({
+  primarySources: ["local", "project"] as const,
   fallbackSources: [] as const,
   enableFallbackOnReadError: true
 });
@@ -279,9 +279,9 @@ export class RuntimeFactory {
         this.deps.config.providerThinkingLevelMappings?.claudeAgentSdk ??
         DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS.claudeAgentSdk,
       settingsPolicy: {
-        primarySources: [...CLAUDE_PROJECT_ONLY_SETTINGS_POLICY.primarySources],
-        fallbackSources: [...CLAUDE_PROJECT_ONLY_SETTINGS_POLICY.fallbackSources],
-        enableFallbackOnReadError: CLAUDE_PROJECT_ONLY_SETTINGS_POLICY.enableFallbackOnReadError
+        primarySources: [...CLAUDE_PROJECT_AND_LOCAL_SETTINGS_POLICY.primarySources],
+        fallbackSources: [...CLAUDE_PROJECT_AND_LOCAL_SETTINGS_POLICY.fallbackSources],
+        enableFallbackOnReadError: CLAUDE_PROJECT_AND_LOCAL_SETTINGS_POLICY.enableFallbackOnReadError
       }
     });
 
