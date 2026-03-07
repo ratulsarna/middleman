@@ -10,7 +10,7 @@ A self-hosted platform for orchestrating AI coding agents. Create a persistent m
 
 You create a **manager agent** for your project. It breaks down work and spawns **worker agents** that run in parallel in isolated git worktrees. The dashboard streams every agent's messages, tool calls, and status in real time — so you always know what's happening. You can steer or interrupt any agent mid-task, send follow-up instructions, or kill workers that go off track.
 
-The manager routes tasks to the right model — Claude Opus for complex reasoning, Sonnet for speed, Codex for focused code generation. Everything runs locally; your code and API keys never leave your machine.
+Claude Code (Agent SDK) and Codex supported as providers. Managers and workers can be any model from either providers.
 
 ## Quick Start
 
@@ -36,8 +36,6 @@ Opens at [localhost:47188](http://localhost:47188). Create a manager, point it a
 **Steer at any time** — Send follow-up instructions, interrupt agents mid-task, or kill workers that go off track. You stay in control without micromanaging.
 
 **Multi-channel messaging** — Chat via the web dashboard, or connect Slack and Telegram so your manager is reachable wherever you work.
-
-**Cron scheduling** — Schedule recurring tasks with cron expressions. Your manager executes them on time, every time.
 
 **Custom archetypes** — Define specialized agent roles by dropping markdown files in `.swarm/archetypes/` in your repo. The manager picks them up automatically.
 
