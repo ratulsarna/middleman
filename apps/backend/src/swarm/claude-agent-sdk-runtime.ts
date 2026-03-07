@@ -1617,22 +1617,16 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   private updateContextUsageFromResult(message: SDKResultMessage): void {
     const usage = message.usage;
     const inputTokens = asNonNegativeInteger(usage?.input_tokens);
-    const outputTokens = asNonNegativeInteger(usage?.output_tokens);
-    const cacheReadTokens = asNonNegativeInteger(usage?.cache_read_input_tokens);
-    const cacheCreationTokens = asNonNegativeInteger(usage?.cache_creation_input_tokens);
-
-    const totalTokens = inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens;
-
     const firstModelUsage = Object.values(message.modelUsage ?? {})[0];
     const contextWindow = asNonNegativeInteger(firstModelUsage?.contextWindow);
 
-    if (!Number.isFinite(totalTokens) || totalTokens < 0 || contextWindow <= 0) {
+    if (!Number.isFinite(inputTokens) || inputTokens < 0 || contextWindow <= 0) {
       return;
     }
 
-    const percent = Math.max(0, Math.min(100, (totalTokens / contextWindow) * 100));
+    const percent = Math.max(0, Math.min(100, (inputTokens / contextWindow) * 100));
     this.contextUsage = {
-      tokens: totalTokens,
+      tokens: inputTokens,
       contextWindow,
       percent
     };

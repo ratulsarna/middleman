@@ -83,7 +83,7 @@ afterEach(() => {
 })
 
 describe('useContextWindow', () => {
-  it('falls back to the codex preset context window for canonical descriptors', () => {
+  it('returns missing for codex when no app-server context usage has been reported yet', () => {
     renderHookProbe(
       makeAgent({
         provider: 'openai-codex-app-server',
@@ -101,7 +101,7 @@ describe('useContextWindow', () => {
       ],
     )
 
-    expect(container.querySelector('[data-testid="context-window"]')?.textContent).toBe('2:1048576')
+    expect(container.querySelector('[data-testid="context-window"]')?.textContent).toBe('missing')
   })
 
   it('uses the claude preset fallback instead of the codex fallback for non-codex providers', () => {
@@ -145,15 +145,34 @@ describe('useContextWindow', () => {
     expect(container.querySelector('[data-testid="context-window"]')?.textContent).toBe('missing')
   })
 
-  it('handles empty messages arrays when using a preset fallback', () => {
+  it('handles empty messages arrays when using the claude fallback', () => {
     renderHookProbe(
       makeAgent({
-        provider: 'openai-codex-app-server',
-        modelId: 'gpt-5.4',
+        provider: 'claude-agent-sdk',
+        modelId: 'claude-2',
       }),
       [],
     )
 
-    expect(container.querySelector('[data-testid="context-window"]')?.textContent).toBe('0:1048576')
+    expect(container.querySelector('[data-testid="context-window"]')?.textContent).toBe('0:200000')
+  })
+
+  it('uses live context usage for codex when app-server reports it', () => {
+    renderHookProbe(
+      {
+        ...makeAgent({
+          provider: 'openai-codex-app-server',
+          modelId: 'gpt-5.4',
+        }),
+        contextUsage: {
+          tokens: 321_000,
+          contextWindow: 1_048_576,
+          percent: 30.6,
+        },
+      },
+      [],
+    )
+
+    expect(container.querySelector('[data-testid="context-window"]')?.textContent).toBe('321000:1048576')
   })
 })

@@ -106,6 +106,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private modelCapabilitiesLoaded = false;
   private modelCapabilitiesLoadPromise: Promise<void> | undefined;
   private turnItemCount = 0;
+  private contextUsage: AgentContextUsage | undefined;
 
   private constructor(options: {
     descriptor: AgentDescriptor;
@@ -199,7 +200,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   }
 
   getContextUsage(): AgentContextUsage | undefined {
-    return undefined;
+    return this.contextUsage;
   }
 
   async sendMessage(
@@ -269,6 +270,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.threadId = undefined;
     this.activeTurnId = undefined;
     this.startRequestPending = false;
+    this.contextUsage = undefined;
 
     this.status = transitionAgentStatus(this.status, "terminated");
     this.descriptor.status = this.status;
@@ -735,6 +737,12 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         return;
       }
 
+      case "thread/tokenUsage/updated": {
+        this.updateContextUsageFromNotification(notification.params);
+        await this.emitStatus();
+        return;
+      }
+
       case "item/started": {
         await this.handleItemEvent("started", notification.params);
         return;
@@ -865,6 +873,39 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         isError: threadItemRepresentsError(item)
       });
     }
+  }
+
+  private updateContextUsageFromNotification(params: unknown): void {
+    const payload = params as {
+      threadId?: unknown;
+      tokenUsage?: {
+        last?: {
+          totalTokens?: unknown;
+        };
+        total?: {
+          totalTokens?: unknown;
+        };
+        modelContextWindow?: unknown;
+      };
+    } | undefined;
+
+    if (typeof payload?.threadId !== "string" || !this.threadId || payload.threadId !== this.threadId) {
+      return;
+    }
+
+    // Codex uses last_token_usage for live context window display; total_token_usage is lifetime spend.
+    const tokens = asNonNegativeInteger(payload.tokenUsage?.last?.totalTokens);
+    const contextWindow = asNonNegativeInteger(payload.tokenUsage?.modelContextWindow);
+    if (!Number.isFinite(tokens) || tokens < 0 || contextWindow <= 0) {
+      return;
+    }
+
+    const percent = Math.max(0, Math.min(100, (tokens / contextWindow) * 100));
+    this.contextUsage = {
+      tokens,
+      contextWindow,
+      percent
+    };
   }
 
   private consumePendingMessage(messageKey: string): void {
@@ -1509,4 +1550,8 @@ function parseDataUrl(value: string): RuntimeImageAttachment | undefined {
     mimeType: match[1],
     data: match[2]
   };
+}
+
+function asNonNegativeInteger(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.trunc(value) : -1;
 }

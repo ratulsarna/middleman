@@ -9,12 +9,16 @@ const CONTEXT_WINDOW_BY_PRESET: Record<ManagerModelPreset, number> = {
   'claude-agent-sdk': 200_000,
 }
 
-function contextWindowForAgent(agent: AgentDescriptor | null): number | null {
+function estimatedContextWindowForAgent(agent: AgentDescriptor | null): number | null {
   if (!agent) {
     return null
   }
 
   const modelPreset = inferModelPreset(agent)
+  if (modelPreset !== 'claude-agent-sdk') {
+    return null
+  }
+
   return modelPreset ? CONTEXT_WINDOW_BY_PRESET[modelPreset] : null
 }
 
@@ -75,7 +79,7 @@ export function useContextWindow({
 }: UseContextWindowOptions): {
   contextWindowUsage: { usedTokens: number; contextWindow: number } | null
 } {
-  const contextWindow = useMemo(() => contextWindowForAgent(activeAgent), [activeAgent])
+  const estimatedContextWindow = useMemo(() => estimatedContextWindowForAgent(activeAgent), [activeAgent])
 
   const contextWindowUsage = useMemo(() => {
     const liveFromStatus =
@@ -89,15 +93,15 @@ export function useContextWindow({
       return liveFromDescriptor
     }
 
-    if (!contextWindow) {
+    if (!estimatedContextWindow) {
       return null
     }
 
     return {
       usedTokens: estimateUsedTokens(messages),
-      contextWindow,
+      contextWindow: estimatedContextWindow,
     }
-  }, [activeAgent, activeAgentId, contextWindow, messages, statuses])
+  }, [activeAgent, activeAgentId, estimatedContextWindow, messages, statuses])
 
   return {
     contextWindowUsage,

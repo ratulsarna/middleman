@@ -2079,7 +2079,7 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
 
       const usageBefore = runtime.getContextUsage();
       expect(usageBefore).toBeDefined();
-      expect(usageBefore!.tokens).toBe(105_000);
+      expect(usageBefore!.tokens).toBe(100_000);
 
       await runtime.compact("summarize key decisions");
 
@@ -2088,9 +2088,54 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
 
       const usageAfter = runtime.getContextUsage();
       expect(usageAfter).toBeDefined();
-      expect(usageAfter!.tokens).toBe(10_500);
+      expect(usageAfter!.tokens).toBe(10_000);
       expect(usageAfter!.tokens).toBeLessThan(usageBefore!.tokens);
       expect(sdkMockState.closeCalls).toBe(0);
+
+      await runtime.terminate({ abort: true });
+    });
+
+    it("tracks live prompt occupancy from input_tokens only", async () => {
+      sdkMockState.streams.push([
+        {
+          type: "result",
+          subtype: "success",
+          session_id: "session-prompt-occupancy",
+          usage: {
+            input_tokens: 12_345,
+            output_tokens: 6_789,
+            cache_read_input_tokens: 4_000,
+            cache_creation_input_tokens: 2_000,
+          },
+          modelUsage: { "claude-opus-4-6": { contextWindow: 200_000 } }
+        }
+      ]);
+
+      const rootDir = await createRuntimeRootDir();
+      const authFile = join(rootDir, "auth", "auth.json");
+
+      setAuthCredential(authFile, "claude-agent-sdk", {
+        type: "oauth",
+        access: "claude-oauth-token",
+        refresh: "",
+        expires: String(Date.now() + 60_000)
+      } as unknown as AuthCredential);
+
+      const runtime = await ClaudeAgentSdkRuntime.create({
+        descriptor: createDescriptor(rootDir),
+        callbacks: { onStatusChange: async () => {} },
+        systemPrompt: "You are a worker",
+        tools: [],
+        authFile
+      });
+
+      await runtime.sendMessage("measure prompt occupancy");
+      await waitFor(() => runtime.getStatus() === "idle");
+
+      expect(runtime.getContextUsage()).toMatchObject({
+        tokens: 12_345,
+        contextWindow: 200_000,
+      });
 
       await runtime.terminate({ abort: true });
     });

@@ -574,6 +574,119 @@ describe('CodexAgentRuntime behavior', () => {
     await expect(runtime.sendMessage('after exit')).rejects.toThrow('is terminated')
   })
 
+  it('uses last token usage for codex context window display and ignores other threads', async () => {
+    const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
+    const descriptor = makeDescriptor(tempDir)
+    await mkdir(dirname(descriptor.sessionFile), { recursive: true })
+
+    const statusUpdates: Array<{ status: AgentStatus; contextUsage?: { tokens: number; contextWindow: number; percent: number } }> = []
+
+    rpcMockState.requestImpl.mockImplementation(async (_client: any, method: string) => {
+      if (method === 'initialize') {
+        return {}
+      }
+
+      if (method === 'account/read') {
+        return { requiresOpenaiAuth: false, account: { id: 'acct-1' } }
+      }
+
+      if (method === 'thread/start') {
+        return { thread: { id: 'thread-usage' } }
+      }
+
+      return {}
+    })
+
+    const runtime = await CodexAgentRuntime.create({
+      descriptor,
+      callbacks: {
+        onStatusChange: async (_agentId, status, _pendingCount, contextUsage) => {
+          statusUpdates.push({
+            status,
+            contextUsage: contextUsage
+              ? {
+                  tokens: contextUsage.tokens,
+                  contextWindow: contextUsage.contextWindow,
+                  percent: contextUsage.percent,
+                }
+              : undefined,
+          })
+        },
+      },
+      systemPrompt: 'You are a test codex runtime.',
+      tools: [],
+    })
+
+    expect(runtime.getContextUsage()).toBeUndefined()
+
+    const instance = rpcMockState.instances[0]
+    await instance.emitNotification({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'thread-usage',
+        turnId: 'turn-usage',
+        tokenUsage: {
+          total: {
+            totalTokens: 432_100,
+            inputTokens: 400_000,
+            cachedInputTokens: 0,
+            outputTokens: 32_100,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: 12_000,
+            inputTokens: 10_000,
+            cachedInputTokens: 0,
+            outputTokens: 2_000,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 1_048_576,
+        },
+      },
+    })
+
+    expect(runtime.getContextUsage()).toMatchObject({
+      tokens: 12_000,
+      contextWindow: 1_048_576,
+    })
+    expect(statusUpdates.at(-1)?.contextUsage).toMatchObject({
+      tokens: 12_000,
+      contextWindow: 1_048_576,
+    })
+
+    await instance.emitNotification({
+      method: 'thread/tokenUsage/updated',
+      params: {
+        threadId: 'different-thread',
+        turnId: 'turn-ignored',
+        tokenUsage: {
+          total: {
+            totalTokens: 999_999,
+            inputTokens: 999_000,
+            cachedInputTokens: 0,
+            outputTokens: 999,
+            reasoningOutputTokens: 0,
+          },
+          last: {
+            totalTokens: 1,
+            inputTokens: 1,
+            cachedInputTokens: 0,
+            outputTokens: 0,
+            reasoningOutputTokens: 0,
+          },
+          modelContextWindow: 1_048_576,
+        },
+      },
+    })
+
+    expect(runtime.getContextUsage()).toMatchObject({
+      tokens: 12_000,
+      contextWindow: 1_048_576,
+    })
+
+    await runtime.terminate({ abort: false })
+  })
+
   it('interrupts active turns during terminate() and clears pending queues', async () => {
     const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
     const descriptor = makeDescriptor(tempDir)
