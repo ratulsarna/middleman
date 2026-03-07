@@ -136,6 +136,23 @@ describe('classifyToolCall', () => {
     })
   })
 
+  it('classifies speak_to_user as non-callable (output already shown as conversation message)', () => {
+    expect(
+      classifyToolCall('speak_to_user', {
+        entryType: 'conversation_log',
+        eventKind: 'tool_execution_start',
+        source: 'runtime_log',
+      }),
+    ).toMatchObject({ callable: false })
+
+    expect(
+      classifyToolCall('mcp__swarm-tools__speak_to_user', {
+        entryType: 'agent_tool_call',
+        eventKind: 'tool_execution_start',
+      }),
+    ).toMatchObject({ callable: false })
+  })
+
   it('classifies known non-callable labels as excluded', () => {
     for (const label of [
       'mcp_tool_call_begin',

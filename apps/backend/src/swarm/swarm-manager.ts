@@ -808,13 +808,15 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         currentSdm.thinkingLevel !== nextSpawnDefaultModel.thinkingLevel;
     }
 
-    const modelChanged =
-      target.model.provider !== nextModel.provider ||
-      target.model.modelId !== nextModel.modelId ||
-      target.model.thinkingLevel !== nextModel.thinkingLevel;
+    const providerChanged = target.model.provider !== nextModel.provider;
+    const modelIdChanged = target.model.modelId !== nextModel.modelId;
+    const thinkingLevelChanged = target.model.thinkingLevel !== nextModel.thinkingLevel;
+    const modelChanged = providerChanged || modelIdChanged || thinkingLevelChanged;
     const promptOverrideChanged = currentPromptOverride !== nextPromptOverride;
-    const shouldReset = modelChanged || promptOverrideChanged;
-    const hasAnyChange = shouldReset || spawnDefaultChanged;
+    // Provider and prompt changes require a fresh runtime, but same-provider
+    // model/thinking updates can reuse the existing provider session/thread.
+    const shouldReset = providerChanged || promptOverrideChanged;
+    const hasAnyChange = modelChanged || promptOverrideChanged || spawnDefaultChanged;
 
     if (!hasAnyChange) {
       this.logDebug("manager:update:no_effective_change", {
@@ -851,6 +853,9 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
       callerAgentId,
       managerId: target.agentId,
       modelChanged,
+      providerChanged,
+      modelIdChanged,
+      thinkingLevelChanged,
       promptOverrideChanged,
       spawnDefaultChanged
     });

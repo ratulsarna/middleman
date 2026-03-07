@@ -89,7 +89,6 @@ const CALLABLE_EXACT_CATEGORY = new Map<string, ToolCallCategory>([
   ['send_message_to_agent', 'agent'],
   ['list_agents', 'agent'],
   ['kill_agent', 'agent'],
-  ['speak_to_user', 'agent'],
 
   ['list_mcp_resources', 'mcp'],
   ['list_mcp_resource_templates', 'mcp'],
@@ -120,6 +119,8 @@ const NON_CALLABLE_EXACT = new Set<string>([
   'item/agentmessage/delta',
   'item/commandexecution/outputdelta',
   'item/filechange/outputdelta',
+  'speak_to_user',
+  'mcp__swarm-tools__speak_to_user',
 
   'mcptoolcall',
   'dynamictoolcall',

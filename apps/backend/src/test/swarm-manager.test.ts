@@ -829,6 +829,37 @@ describe('SwarmManager', () => {
     expect(systemError).toBeUndefined()
   })
 
+  it('emits manager tool calls as conversation_log entries visible in web view', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    seedManagerDescriptorForRuntimeEventTests(manager, config)
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_start',
+      toolName: 'spawn_agent',
+      toolCallId: 'call_abc123',
+      args: { agentId: 'worker-1', task: 'Analyze the codebase' },
+    })
+
+    await (manager as any).handleRuntimeSessionEvent('manager', {
+      type: 'tool_execution_end',
+      toolName: 'spawn_agent',
+      toolCallId: 'call_abc123',
+      result: { success: true },
+      isError: false,
+    })
+
+    const history = manager.getConversationHistory('manager')
+    const toolLogs = history.filter(
+      (entry): entry is Extract<typeof entry, { type: 'conversation_log' }> =>
+        entry.type === 'conversation_log' && entry.toolName === 'spawn_agent',
+    )
+    expect(toolLogs).toHaveLength(2)
+    expect(toolLogs[0].kind).toBe('tool_execution_start')
+    expect(toolLogs[1].kind).toBe('tool_execution_end')
+    expect(toolLogs[1].isError).toBe(false)
+  })
+
   it('handles /compact as a manager slash command without forwarding it as a user prompt', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
@@ -2176,40 +2207,68 @@ describe('SwarmManager', () => {
     expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(2)
   })
 
-  it('applies explicit non-preset provider/modelId update_manager payload and preserves it across restart', async () => {
+  it('applies explicit same-provider update_manager payload without resetting runtime or session state', async () => {
     const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
+    const manager = new ResumeInspectingSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     const initialRuntime = manager.runtimeByAgentId.get('manager')
+    const initialDescriptor = manager.getAgent('manager')
     expect(initialRuntime).toBeDefined()
+    expect(initialDescriptor).toBeDefined()
+
+    const runtimeStateFile = `${initialDescriptor!.sessionFile}.claude-runtime-state.json`
+    await writeFile(runtimeStateFile, `${JSON.stringify({ sessionId: 'claude-session-123' })}\n`, 'utf8')
+
+    await manager.handleUserMessage('hello before explicit update')
+    expect(
+      manager
+        .getConversationHistory('manager')
+        .some((entry) => entry.type === 'conversation_message' && entry.text === 'hello before explicit update'),
+    ).toBe(true)
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
       provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
+      thinkingLevel: 'low',
     })
 
-    expect(updated.resetApplied).toBe(true)
+    expect(updated.resetApplied).toBe(false)
     expect(updated.manager.model).toEqual({
       provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
-      thinkingLevel: 'xhigh',
+      thinkingLevel: 'low',
     })
-    expect(initialRuntime?.terminateCalls).toEqual([{ abort: true }])
-    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(2)
+    expect(initialRuntime?.terminateCalls).toEqual([])
+    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(1)
+    expect(
+      manager
+        .getConversationHistory('manager')
+        .some((entry) => entry.type === 'conversation_message' && entry.text === 'hello before explicit update'),
+    ).toBe(true)
+    await expect(readFile(runtimeStateFile, 'utf8')).resolves.toContain('"sessionId":"claude-session-123"')
 
-    const rebooted = new TestSwarmManager(config)
+    const rebooted = new ResumeInspectingSwarmManager(config)
     await rebooted.boot()
 
     const restoredManager = rebooted.getAgent('manager')
     expect(restoredManager?.model).toEqual({
       provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
-      thinkingLevel: 'xhigh',
+      thinkingLevel: 'low',
     })
+    expect(
+      rebooted
+        .getConversationHistory('manager')
+        .some((entry) => entry.type === 'conversation_message' && entry.text === 'hello before explicit update'),
+    ).toBe(true)
 
     await expect(rebooted.handleUserMessage('hello after explicit update')).resolves.toBeUndefined()
+    expect(rebooted.resumeStateByAgentId.get('manager')).toEqual({
+      provider: 'claude-agent-sdk',
+      resumeId: 'claude-session-123',
+    })
   })
 
   it('does not reset manager runtime when explicit update_manager payload has no effective change', async () => {

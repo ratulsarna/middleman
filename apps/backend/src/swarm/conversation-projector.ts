@@ -138,7 +138,13 @@ export class ConversationProjector {
         }
       }
 
-      return;
+      if (
+        event.type !== "tool_execution_start" &&
+        event.type !== "tool_execution_update" &&
+        event.type !== "tool_execution_end"
+      ) {
+        return;
+      }
     }
 
     switch (event.type) {

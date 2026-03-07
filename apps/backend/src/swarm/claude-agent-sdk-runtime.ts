@@ -1440,6 +1440,10 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   }
 
   private async emitAssistantMessageEvents(message: SDKAssistantMessage): Promise<void> {
+    // A new assistant message means any previously active tool calls have completed
+    // (the SDK may not always send tool_progress/tool_use_summary events).
+    await this.completeActiveToolCalls();
+
     const content = toRuntimeMessageContent(message.message?.content);
     const thinking = extractThinkingText(message.message?.content);
     const stopReason = readStopReason(message.message) ?? (message.error ? "error" : undefined);
@@ -1468,6 +1472,42 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
       type: "message_end",
       message: sessionMessage
     });
+
+    // Extract tool_use blocks from the assistant message content and emit
+    // tool_execution_start events. If the SDK sends tool_progress/tool_use_summary
+    // later, they will update/complete these. Otherwise, completeActiveToolCalls()
+    // will close them when the next assistant message arrives or the query ends.
+    await this.emitToolUseBlockEvents(message.message?.content);
+  }
+
+  private async emitToolUseBlockEvents(content: unknown): Promise<void> {
+    if (!Array.isArray(content)) {
+      return;
+    }
+
+    for (const item of content) {
+      if (!item || typeof item !== "object") {
+        continue;
+      }
+
+      const block = item as { type?: unknown; id?: unknown; name?: unknown; input?: unknown };
+      if (block.type !== "tool_use" || typeof block.id !== "string" || typeof block.name !== "string") {
+        continue;
+      }
+
+      if (this.activeToolsById.has(block.id)) {
+        continue;
+      }
+
+      this.activeToolsById.set(block.id, { toolName: block.name });
+
+      await this.callbacks.onSessionEvent?.(this.descriptor.agentId, {
+        type: "tool_execution_start",
+        toolName: block.name,
+        toolCallId: block.id,
+        args: block.input ?? {}
+      });
+    }
   }
 
   private async emitToolProgressEvents(message: Extract<SDKMessage, { type: "tool_progress" }>): Promise<void> {
