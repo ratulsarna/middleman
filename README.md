@@ -4,7 +4,7 @@
 
 A self-hosted platform for orchestrating AI coding agents. Create a persistent manager for your project — it dispatches workers, coordinates their output, and reports back. You get full observability into every agent's work and can steer any of them at any time.
 
-<img width="1856" height="1454" alt="image" src="https://github.com/user-attachments/assets/209501e1-a44b-47d8-a4ce-4caca0d64b85" />
+<img width="1856" height="1454" alt="image" src="https://github.com/user-attachments/assets/64a25dd9-926c-4975-95b1-164db7d0c21f" />
 
 ## What is Nexus?
 
