@@ -462,6 +462,47 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
     await runtime.terminate({ abort: true });
   });
 
+  it("can replace the Claude Code preset with a raw custom system prompt", async () => {
+    sdkMockState.streams.push([
+      {
+        type: "result",
+        subtype: "success",
+        session_id: "session-custom-system-prompt",
+        usage: undefined,
+        modelUsage: {}
+      }
+    ]);
+
+    const rootDir = await createRuntimeRootDir();
+    const authFile = join(rootDir, "auth", "auth.json");
+
+    setAuthCredential(authFile, "claude-agent-sdk", {
+      type: "oauth",
+      access: "claude-oauth-token",
+      refresh: "claude-refresh-token",
+      expires: String(Date.now() + 60_000)
+    } as unknown as AuthCredential);
+
+    const runtime = await ClaudeAgentSdkRuntime.create({
+      descriptor: createDescriptor(rootDir),
+      callbacks: {
+        onStatusChange: async () => {}
+      },
+      systemPrompt: "You are a worker",
+      useClaudeCodeSystemPromptPreset: false,
+      tools: [],
+      authFile
+    });
+
+    await runtime.sendMessage("check raw system prompt");
+    await waitFor(() => runtime.getPendingCount() === 0 && runtime.getStatus() === "idle");
+
+    const systemPrompt = sdkMockState.queryCalls[0]?.options?.systemPrompt;
+    expect(systemPrompt).toBe("You are a worker");
+
+    await runtime.terminate({ abort: true });
+  });
+
   it("reads output-style metadata without pre-aborting the probe interrupt path", async () => {
     sdkMockState.interruptThrowsAbortWhenSignalAborted = true;
     sdkMockState.initializationResults.push({

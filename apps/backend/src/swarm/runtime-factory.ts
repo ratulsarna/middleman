@@ -159,6 +159,7 @@ export class RuntimeFactory {
       },
       now: this.deps.now,
       systemPrompt: claudeSystemPrompt,
+      useClaudeCodeSystemPromptPreset: !managerHasSelectedOutputStyle,
       tools: swarmTools,
       authFile: this.deps.config.paths.authFile,
       runtimeEnv: {

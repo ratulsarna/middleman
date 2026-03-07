@@ -123,6 +123,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
   private readonly callbacks: SwarmRuntimeCallbacks;
   private readonly now: () => string;
   private readonly systemPrompt: string;
+  private readonly useClaudeCodeSystemPromptPreset: boolean;
   private readonly authStorage: AuthStorage;
   private readonly sessionManager: SessionManager;
   private readonly runtimeEnv: Record<string, string | undefined>;
@@ -157,6 +158,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     callbacks: SwarmRuntimeCallbacks;
     now?: () => string;
     systemPrompt: string;
+    useClaudeCodeSystemPromptPreset?: boolean;
     tools: ToolDefinition[];
     authFile: string;
     runtimeEnv?: Record<string, string | undefined>;
@@ -167,6 +169,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     this.callbacks = options.callbacks;
     this.now = options.now ?? (() => new Date().toISOString());
     this.systemPrompt = options.systemPrompt;
+    this.useClaudeCodeSystemPromptPreset = options.useClaudeCodeSystemPromptPreset ?? true;
     this.status = options.descriptor.status;
     this.authStorage = AuthStorage.create(options.authFile);
     this.sessionManager = SessionManager.open(options.descriptor.sessionFile);
@@ -225,6 +228,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     callbacks: SwarmRuntimeCallbacks;
     now?: () => string;
     systemPrompt: string;
+    useClaudeCodeSystemPromptPreset?: boolean;
     tools: ToolDefinition[];
     authFile: string;
     runtimeEnv?: Record<string, string | undefined>;
@@ -1117,11 +1121,7 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
       options: {
         cwd: this.descriptor.cwd,
         model: this.descriptor.model.modelId,
-        systemPrompt: {
-          type: "preset",
-          preset: "claude_code",
-          append: this.systemPrompt
-        },
+        systemPrompt: this.resolveSdkSystemPrompt(),
         settingSources: options.settingSources,
         permissionMode: "bypassPermissions",
         allowDangerouslySkipPermissions: true,
@@ -1161,6 +1161,24 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
           : {})
       }
     });
+  }
+
+  private resolveSdkSystemPrompt():
+    | string
+    | {
+        type: "preset";
+        preset: "claude_code";
+        append: string;
+      } {
+    if (!this.useClaudeCodeSystemPromptPreset) {
+      return this.systemPrompt;
+    }
+
+    return {
+      type: "preset",
+      preset: "claude_code",
+      append: this.systemPrompt
+    };
   }
 
   private resolveRequestedReasoningConfig(): ClaudeRequestedReasoningConfig {

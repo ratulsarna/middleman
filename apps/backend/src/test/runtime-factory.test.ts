@@ -162,6 +162,7 @@ describe("RuntimeFactory", () => {
       authFile: string;
       runtimeEnv: Record<string, string>;
       systemPrompt: string;
+      useClaudeCodeSystemPromptPreset: boolean;
       thinkingLevelToConfig: Record<string, { thinking: string; effort?: string }>;
       settingsPolicy: {
         primarySources: string[];
@@ -175,6 +176,7 @@ describe("RuntimeFactory", () => {
       CLAUDE_CONFIG_DIR: "/tmp/swarm-data/claude-code"
     });
     expect(call.systemPrompt).toContain("Base system prompt");
+    expect(call.useClaudeCodeSystemPromptPreset).toBe(true);
     expect(call.systemPrompt).toContain("Repository policy context.");
     expect(call.thinkingLevelToConfig).toEqual({
       off: { thinking: "disabled" },
@@ -230,9 +232,11 @@ describe("RuntimeFactory", () => {
 
     const call = runtimeFactoryMocks.claudeCreate.mock.calls[0]?.[0] as {
       systemPrompt: string;
+      useClaudeCodeSystemPromptPreset: boolean;
     };
     expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith("/tmp/project");
     expect(call.systemPrompt).not.toContain("Manager base system prompt");
+    expect(call.useClaudeCodeSystemPromptPreset).toBe(false);
     expect(call.systemPrompt).toContain("User-facing output MUST go through speak_to_user.");
     expect(call.systemPrompt).toContain(
       "Use speak_to_user for every user-facing message; for non-web replies, explicitly set target.channel + target.channelId from the inbound source metadata line."
@@ -269,9 +273,11 @@ describe("RuntimeFactory", () => {
 
       const call = runtimeFactoryMocks.claudeCreate.mock.calls[0]?.[0] as {
         systemPrompt: string;
+        useClaudeCodeSystemPromptPreset: boolean;
       };
       expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith(projectRoot);
       expect(call.systemPrompt).not.toContain("Manager base system prompt");
+      expect(call.useClaudeCodeSystemPromptPreset).toBe(false);
       expect(call.systemPrompt).toContain("User-facing output MUST go through speak_to_user.");
       expect(call.systemPrompt).toContain(
         "Use speak_to_user for every user-facing message; for non-web replies, explicitly set target.channel + target.channelId from the inbound source metadata line."
@@ -316,9 +322,11 @@ describe("RuntimeFactory", () => {
 
       const call = runtimeFactoryMocks.claudeCreate.mock.calls[0]?.[0] as {
         systemPrompt: string;
+        useClaudeCodeSystemPromptPreset: boolean;
       };
       expect(runtimeFactoryMocks.readClaudeOutputStyleLenient).toHaveBeenCalledWith(projectRoot);
       expect(call.systemPrompt).toContain("Manager base system prompt");
+      expect(call.useClaudeCodeSystemPromptPreset).toBe(true);
       expect(call.systemPrompt).toContain("Repository policy context.");
     } finally {
       await rm(projectRoot, { recursive: true, force: true });
