@@ -141,7 +141,7 @@ export function buildSwarmTools(host: SwarmToolHost, descriptor: AgentDescriptor
             "Required agent identifier. Normalized to lowercase kebab-case; collisions are suffixed numerically."
         }),
         archetypeId: Type.Optional(
-          Type.String({ description: "Optional archetype id (for example: merger)." })
+          Type.String({ description: "Optional archetype id." })
         ),
         systemPrompt: Type.Optional(Type.String({ description: "Optional system prompt override." })),
         model: Type.Optional(spawnModelPresetSchema),

@@ -5,14 +5,13 @@ import { describe, expect, it } from 'vitest'
 import { loadArchetypePromptRegistry } from '../swarm/archetypes/archetype-prompt-registry.js'
 
 describe('loadArchetypePromptRegistry', () => {
-  it('loads built-in manager and merger prompts', async () => {
+  it('loads built-in manager prompt', async () => {
     const root = await mkdtemp(join(tmpdir(), 'swarm-archetype-prompt-test-'))
     const repoOverridesDir = join(root, '.swarm', 'archetypes')
 
     const registry = await loadArchetypePromptRegistry({ repoOverridesDir })
 
     expect(registry.resolvePrompt('manager')).toContain('You are a PM/EM (product-engineering manager) in a multi-agent swarm.')
-    expect(registry.resolvePrompt('merger')).toContain('You are the merger agent in a multi-agent swarm.')
   })
 
   it('applies repo markdown overrides with precedence by archetype id', async () => {
@@ -25,6 +24,5 @@ describe('loadArchetypePromptRegistry', () => {
     const registry = await loadArchetypePromptRegistry({ repoOverridesDir })
 
     expect(registry.resolvePrompt('manager')).toBe('repo manager override')
-    expect(registry.resolvePrompt('merger')).toContain('You are the merger agent in a multi-agent swarm.')
   })
 })

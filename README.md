@@ -1,1 +1,74 @@
+# Nexus
 
+**Stop managing your agents. Hire a middle manager.**
+
+A self-hosted platform for orchestrating AI coding agents. Create a persistent manager for your project — it dispatches workers, coordinates their output, and reports back. You get full observability into every agent's work and can steer any of them at any time.
+
+![Architecture](docs/architecture.png)
+
+## What is Nexus?
+
+You create a **manager agent** for your project. It breaks down work and spawns **worker agents** that run in parallel in isolated git worktrees. The dashboard streams every agent's messages, tool calls, and status in real time — so you always know what's happening. You can steer or interrupt any agent mid-task, send follow-up instructions, or kill workers that go off track.
+
+The manager routes tasks to the right model — Claude Opus for complex reasoning, Sonnet for speed, Codex for focused code generation. Everything runs locally; your code and API keys never leave your machine.
+
+## Quick Start
+
+```bash
+git clone https://github.com/ratulsarna/nexus.git
+cd nexus
+pnpm install
+pnpm dev
+```
+
+Opens at [localhost:47188](http://localhost:47188). Create a manager, point it at a repo, and start delegating.
+
+**Requirements:** Node.js 22+, pnpm 10+, and an [Anthropic](https://console.anthropic.com/) or [OpenAI](https://platform.openai.com/) API key (configured in Settings).
+
+## Key Capabilities
+
+**Parallel execution** — Spawn multiple workers at once. Codex handles backend, Opus handles UI — all running simultaneously in isolated git worktrees.
+
+**Multi-model teams** — Route tasks to the right model. The manager picks the best fit for each job from Claude Opus, Sonnet, Haiku, or Codex.
+
+**Persistent memory** — Your manager remembers preferences, routing decisions, and project context across sessions. The knowledge compounds over time.
+
+**Full observability** — Every agent's messages, tool calls, and thinking are streamed to the dashboard in real time. You always know exactly what each agent is doing.
+
+**Steer at any time** — Send follow-up instructions, interrupt agents mid-task, or kill workers that go off track. You stay in control without micromanaging.
+
+**Multi-channel messaging** — Chat via the web dashboard, or connect Slack and Telegram so your manager is reachable wherever you work.
+
+**Cron scheduling** — Schedule recurring tasks with cron expressions. Your manager executes them on time, every time.
+
+**Custom archetypes** — Define specialized agent roles by dropping markdown files in `.swarm/archetypes/` in your repo. The manager picks them up automatically.
+
+**Voice input & artifacts** — Dictate instructions via your microphone. Inspect files produced by agents directly in the dashboard with markdown rendering, image preview, and Mermaid diagrams.
+
+## How It Works
+
+1. **Create a manager** — Spin one up for your project. Point it at a repo, pick the models you want it to use.
+2. **Onboard it** — Tell it how you like to work — task breakdown strategy, model routing, coding standards. It remembers everything.
+3. **Let it manage** — Hand off the work. Your manager dispatches coding agents and tracks progress. Watch everything in real time and steer when needed.
+
+## Development
+
+```bash
+pnpm dev            # Start backend (:47187) + UI (:47188)
+pnpm build          # Build all packages
+pnpm test           # Run tests
+pnpm prod           # Build and start production (backend :47287, UI :47289)
+```
+
+## Project Layout
+
+```
+apps/backend/       Node.js server — agent orchestration, WebSocket, HTTP API
+apps/ui/            React dashboard — chat, settings, artifact viewer
+apps/site/          Landing page
+packages/protocol/  Shared TypeScript types for the wire protocol
+```
+
+## License
+
+[Apache 2.0](LICENSE)

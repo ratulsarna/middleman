@@ -104,7 +104,6 @@ You were spawned by a manager agent to carry out a specific task. You are NOT ru
 - Task instructions come from the manager agent who spawned you.`;
 }
 const MANAGER_ARCHETYPE_ID = "manager";
-const MERGER_ARCHETYPE_ID = "merger";
 const INTERNAL_MODEL_MESSAGE_PREFIX = "SYSTEM: ";
 const CROSS_MANAGER_RATE_WINDOW_MS = 60_000;
 const CROSS_MANAGER_RATE_LIMIT = 20;
@@ -1884,13 +1883,6 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         throw new Error(`Unknown archetypeId: ${explicit}`);
       }
       return explicit;
-    }
-
-    if (
-      normalizedAgentId === MERGER_ARCHETYPE_ID ||
-      normalizedAgentId.startsWith(`${MERGER_ARCHETYPE_ID}-`)
-    ) {
-      return MERGER_ARCHETYPE_ID;
     }
 
     return undefined;

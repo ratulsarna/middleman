@@ -9,9 +9,9 @@ const features = [
       'Spawn multiple workers at once. Codex handles backend, Opus handles UI — all running simultaneously in isolated git worktrees.',
   },
   {
-    title: 'Agentic Merge Queue',
+    title: 'Custom Archetypes',
     description:
-      'A dedicated merger agent serializes all completed work into main. One integration point, no conflicts, no babysitting.',
+      'Define specialized agent roles with markdown archetype files. Drop them in your repo and the manager picks them up automatically.',
   },
   {
     title: 'Persistent Memory',
@@ -49,7 +49,7 @@ const flow = [
   {
     title: 'Let it manage',
     description:
-      'Hand off the work. Your manager dispatches coding agents, tracks progress, handles merges, and keeps you posted. You direct — it executes.',
+      'Hand off the work. Your manager dispatches coding agents, tracks progress, and keeps you posted. You direct — it executes.',
   },
 ]
 
@@ -151,8 +151,8 @@ function LandingPage() {
             <p className="text-[1.05rem] leading-[1.7] text-ink">
               Nexus gives every project a persistent manager that actually
               sticks around. You tell it what needs to get done — it dispatches
-              workers, tracks progress, and handles the merge queue. You stay
-              informed, not involved.
+              workers, tracks progress, and reports back. You stay informed,
+              not involved.
             </p>
           </div>
         </section>

@@ -416,55 +416,6 @@ describe('SwarmManager', () => {
     expect(manager.systemPromptByAgentId.get('manager')).toBe(managerOverride)
   })
 
-  it('uses merger archetype prompt for merger workers', async () => {
-    const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const merger = await manager.spawnAgent('manager', {
-      agentId: 'Release Merger',
-      archetypeId: 'merger',
-    })
-
-    const mergerPrompt = manager.systemPromptByAgentId.get(merger.agentId)
-    expect(mergerPrompt).toContain('You are the merger agent in a multi-agent swarm.')
-    expect(mergerPrompt).toContain('Own branch integration and merge execution tasks.')
-  })
-
-  it('applies deterministic merger archetype mapping for merger-* worker ids', async () => {
-    const config = await makeTempConfig()
-    const manager = new TestSwarmManager(config)
-    await bootWithDefaultManager(manager, config)
-
-    const merger = await manager.spawnAgent('manager', { agentId: 'Merger Agent' })
-
-    const mergerPrompt = manager.systemPromptByAgentId.get(merger.agentId)
-    expect(merger.agentId).toBe('merger-agent')
-    expect(mergerPrompt).toContain('You are the merger agent in a multi-agent swarm.')
-  })
-
-  it('restores merger archetype workers with merger prompts on restart', async () => {
-    const config = await makeTempConfig()
-
-    const firstBoot = new TestSwarmManager(config)
-    await bootWithDefaultManager(firstBoot, config)
-
-    const merger = await firstBoot.spawnAgent('manager', {
-      agentId: 'Merger',
-      archetypeId: 'merger',
-    })
-
-    const secondBoot = new TestSwarmManager(config)
-    await bootWithDefaultManager(secondBoot, config)
-
-    expect(secondBoot.systemPromptByAgentId.get(merger.agentId)).toBeUndefined()
-    await secondBoot.sendMessage('manager', merger.agentId, 'resume merge')
-
-    expect(secondBoot.systemPromptByAgentId.get(merger.agentId)).toContain(
-      'You are the merger agent in a multi-agent swarm.',
-    )
-  })
-
   it('spawns unique normalized agent ids on collisions', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
