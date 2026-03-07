@@ -1,6 +1,6 @@
-# Claude/Codex Manager Controls Plan (Brainstorm)
+# Claude/Codex Manager Controls Plan (Historical)
 
-> **Note**: The Pi runtime and `pi-codex`/`pi-opus` presets referenced in this document have been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain.
+> **Historical document**: The Pi runtime and `pi-codex`/`pi-opus` presets referenced below have been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain.
 
 Date: 2026-03-02
 

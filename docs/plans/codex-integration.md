@@ -1,6 +1,6 @@
-# Codex App Server Integration Plan for Middleman
+# Codex App Server Integration Plan (Historical)
 
-> **Note**: The Pi runtime and `pi-codex`/`pi-opus` presets referenced in this document have been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain. This plan is historical.
+> **Historical document**: The Pi runtime and `pi-codex`/`pi-opus` presets referenced below have been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain. This plan has been fully executed and superseded.
 
 ## Objective
 Integrate **OpenAI Codex App Server** as an alternate runtime so Middleman can run Codex-based agents alongside existing pi-based agents.
