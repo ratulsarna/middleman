@@ -1,6 +1,6 @@
 # Nexus
 
-**Stop managing your agents. Hire a middle manager.**
+**Multi-agents with full observation and steering**
 
 A self-hosted platform for orchestrating AI coding agents. Create a persistent manager for your project — it dispatches workers, coordinates their output, and reports back. You get full observability into every agent's work and can steer any of them at any time.
 
