@@ -3,7 +3,7 @@ import { dirname } from "node:path";
 import type { SessionManager } from "@mariozechner/pi-coding-agent";
 
 /**
- * pi-coding-agent only flushes session files after an assistant "message" entry exists.
+ * SessionManager only flushes session files after an assistant "message" entry exists.
  * Claude SDK runtimes append only custom entries, so we force persistence for that case.
  */
 export function persistSessionManagerCustomEntryIfNeeded(sessionManager: SessionManager): void {

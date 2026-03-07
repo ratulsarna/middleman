@@ -662,6 +662,10 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
     const sessionIdAtStart = this.sessionId;
     const attemptedResumeId = sessionIdAtStart;
     const usedResume = typeof attemptedResumeId === "string" && attemptedResumeId.length > 0;
+    this.logRuntimeResumeState({
+      outcome: usedResume ? "resume_attempt" : "fresh_start",
+      ...(attemptedResumeId ? { persistedSessionId: attemptedResumeId } : {})
+    });
     const requestedReasoning = this.resolveRequestedReasoningConfig();
 
     this.currentAbortController = abortController;
@@ -832,6 +836,12 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
       this.currentQuery = undefined;
       this.currentAbortController = undefined;
     }
+
+    this.logRuntimeResumeState({
+      outcome: usedResume ? "resume_success" : "fresh_start",
+      ...(attemptedResumeId ? { persistedSessionId: attemptedResumeId } : {}),
+      ...(this.sessionId ? { activeSessionId: this.sessionId } : {})
+    });
 
     await this.callbacks.onSessionEvent?.(this.descriptor.agentId, {
       type: "turn_end",
@@ -1612,6 +1622,15 @@ export class ClaudeAgentSdkRuntime implements SwarmAgentRuntime {
       message: normalized.message,
       stack: normalized.stack,
       details
+    });
+  }
+
+  private logRuntimeResumeState(details: Record<string, unknown>): void {
+    console.info(`[swarm][${this.now()}] runtime:info`, {
+      runtime: "claude-agent-sdk",
+      agentId: this.descriptor.agentId,
+      event: "resume_state",
+      ...details
     });
   }
 }

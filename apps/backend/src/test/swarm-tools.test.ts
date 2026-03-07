@@ -33,7 +33,7 @@ function makeWorkerDescriptor(agentId: string): AgentDescriptor {
     updatedAt: '2026-01-01T00:00:00.000Z',
     cwd: '/tmp/swarm',
     model: {
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'xhigh',
     },
@@ -80,18 +80,18 @@ describe('buildSwarmTools', () => {
       'tool-call',
       {
         agentId: 'Worker Opus',
-        model: 'pi-opus',
+        model: 'claude-agent-sdk',
       },
       undefined,
       undefined,
       undefined as any,
     )
 
-    expect(receivedInput?.model).toBe('pi-opus')
+    expect(receivedInput?.model).toBe('claude-agent-sdk')
     expect(result.details).toMatchObject({
       agentId: 'worker-opus',
       model: {
-        provider: 'anthropic',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-opus-4-6',
         thinkingLevel: 'xhigh',
       },
@@ -116,7 +116,7 @@ describe('buildSwarmTools', () => {
         undefined,
         undefined as any,
       ),
-    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-opus|codex-app|claude-agent-sdk')
+    ).rejects.toThrow('spawn_agent.model must be one of codex-app|claude-agent-sdk')
   })
 
   it('propagates spawn_agent explicit provider and modelId to host.spawnAgent', async () => {

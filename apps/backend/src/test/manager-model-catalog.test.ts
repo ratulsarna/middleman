@@ -1,42 +1,9 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const piAiMockState = vi.hoisted(() => ({
-  modelsByProvider: {} as Record<string, Array<{ id: string; name?: string; reasoning?: boolean; xhigh?: boolean }>>
-}));
-
-vi.mock("@mariozechner/pi-ai", () => ({
-  getModels: (provider: string) => {
-    return piAiMockState.modelsByProvider[provider] ?? [];
-  },
-  supportsXhigh: (model: { xhigh?: unknown }) => {
-    return model?.xhigh === true;
-  }
-}));
+import { describe, expect, it, vi } from "vitest";
 
 import { ManagerModelCatalogService, parseCodexModelListData } from "../swarm/manager-model-catalog.js";
 
 describe("ManagerModelCatalogService", () => {
-  beforeEach(() => {
-    piAiMockState.modelsByProvider = {
-      "openai-codex": [],
-      anthropic: []
-    };
-  });
-
-  it("builds provider catalogs with capability-filtered thinking options and deterministic ordering", async () => {
-    piAiMockState.modelsByProvider = {
-      "openai-codex": [
-        { id: "gpt-reason", name: "GPT Reason", reasoning: true, xhigh: false },
-        { id: "gpt-no-reason", name: "GPT No Reason", reasoning: false, xhigh: false },
-        { id: "gpt-xhigh", name: "GPT XHigh", reasoning: true, xhigh: true },
-        { id: "GPT-XHIGH", name: "Duplicate XHigh", reasoning: true, xhigh: true }
-      ],
-      anthropic: [
-        { id: "claude-z", name: "Claude Z", reasoning: true, xhigh: false },
-        { id: "claude-a", name: "Claude A", reasoning: false, xhigh: false }
-      ]
-    };
-
+  it("builds provider catalogs with claude-agent-sdk and codex-app-server providers", async () => {
     const service = new ManagerModelCatalogService({
       now: () => new Date("2026-01-01T00:00:00.000Z"),
       probeCodexModelListData: async () => [
@@ -56,42 +23,23 @@ describe("ManagerModelCatalogService", () => {
     const catalog = await service.getCatalog();
     expect(catalog.fetchedAt).toBe("2026-01-01T00:00:00.000Z");
     expect(catalog.providers.map((provider) => provider.provider)).toEqual([
-      "openai-codex",
-      "anthropic",
       "claude-agent-sdk",
       "openai-codex-app-server"
     ]);
 
-    const openaiCodex = catalog.providers[0];
-    expect(openaiCodex.models.map((model) => model.modelId)).toEqual([
-      "gpt-no-reason",
-      "gpt-reason",
-      "gpt-xhigh"
+    const claudeAgentSdk = catalog.providers[0];
+    expect(claudeAgentSdk.surfaces).toEqual(["create_manager", "manager_settings", "spawn_default"]);
+    expect(claudeAgentSdk.models).toEqual([
+      {
+        modelId: "claude-opus-4-6",
+        modelLabel: "Claude Opus 4.6",
+        allowedThinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh"],
+        defaultThinkingLevel: "xhigh"
+      }
     ]);
-    expect(openaiCodex.models[0]).toMatchObject({
-      modelId: "gpt-no-reason",
-      allowedThinkingLevels: ["off"],
-      defaultThinkingLevel: "off"
-    });
-    expect(openaiCodex.models[1]).toMatchObject({
-      modelId: "gpt-reason",
-      allowedThinkingLevels: ["off", "minimal", "low", "medium", "high"],
-      defaultThinkingLevel: "high"
-    });
-    expect(openaiCodex.models[2]).toMatchObject({
-      modelId: "gpt-xhigh",
-      allowedThinkingLevels: ["off", "minimal", "low", "medium", "high", "xhigh"],
-      defaultThinkingLevel: "xhigh"
-    });
 
-    const anthropic = catalog.providers[1];
-    expect(anthropic.models.map((model) => model.modelId)).toEqual(["claude-a", "claude-z"]);
-
-    const claudeAgentSdk = catalog.providers[2];
-    expect(claudeAgentSdk.models).toEqual(anthropic.models);
-
-    const codexAppServer = catalog.providers[3];
-    expect(codexAppServer.surfaces).toEqual(["manager_settings", "spawn_default"]);
+    const codexAppServer = catalog.providers[1];
+    expect(codexAppServer.surfaces).toEqual(["create_manager", "manager_settings", "spawn_default"]);
     expect(codexAppServer.models).toEqual([
       {
         modelId: "codex-alpha",
@@ -109,11 +57,6 @@ describe("ManagerModelCatalogService", () => {
   });
 
   it("deduplicates concurrent codex probes, serves cached data within TTL, and falls back to stale cache on failure", async () => {
-    piAiMockState.modelsByProvider = {
-      "openai-codex": [{ id: "gpt-model", reasoning: true, xhigh: true }],
-      anthropic: [{ id: "claude-model", reasoning: true, xhigh: false }]
-    };
-
     let now = new Date("2026-01-01T00:00:00.000Z");
     const probe = vi.fn(async () => {
       return [
@@ -133,8 +76,8 @@ describe("ManagerModelCatalogService", () => {
 
     const [first, second] = await Promise.all([service.getCatalog(), service.getCatalog()]);
     expect(probe).toHaveBeenCalledTimes(1);
-    expect(first.providers[3]?.models[0]?.modelId).toBe("codex-live");
-    expect(second.providers[3]?.models[0]?.modelId).toBe("codex-live");
+    expect(first.providers[1]?.models[0]?.modelId).toBe("codex-live");
+    expect(second.providers[1]?.models[0]?.modelId).toBe("codex-live");
 
     now = new Date("2026-01-01T00:00:30.000Z");
     await service.getCatalog();
@@ -144,16 +87,11 @@ describe("ManagerModelCatalogService", () => {
     probe.mockRejectedValueOnce(new Error("probe unavailable"));
     const stale = await service.getCatalog();
     expect(probe).toHaveBeenCalledTimes(2);
-    expect(stale.providers[3]?.models[0]?.modelId).toBe("codex-live");
+    expect(stale.providers[1]?.models[0]?.modelId).toBe("codex-live");
     expect(stale.warnings?.join(" ")).toContain("stale cached");
   });
 
   it("uses fallback codex model catalog when probe fails without cache", async () => {
-    piAiMockState.modelsByProvider = {
-      "openai-codex": [{ id: "gpt-model", reasoning: true, xhigh: true }],
-      anthropic: [{ id: "claude-model", reasoning: true, xhigh: false }]
-    };
-
     const service = new ManagerModelCatalogService({
       now: () => new Date("2026-01-01T00:00:00.000Z"),
       probeCodexModelListData: async () => {
@@ -162,7 +100,7 @@ describe("ManagerModelCatalogService", () => {
     });
 
     const catalog = await service.getCatalog();
-    expect(catalog.providers[3]?.models).toEqual([
+    expect(catalog.providers[1]?.models).toEqual([
       {
         modelId: "default",
         modelLabel: "default",

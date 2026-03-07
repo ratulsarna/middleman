@@ -1,5 +1,7 @@
 # Stuck Agent Analysis (voice manager)
 
+> **Note**: The Pi runtime (`agent-runtime.ts`) referenced throughout this document has been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain. This analysis is historical.
+
 ## Scope
 Investigated the requested paths:
 

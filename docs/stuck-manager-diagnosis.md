@@ -1,5 +1,7 @@
 # Stuck Manager Diagnosis (Accepted Messages, No Reply Until Manual Compact)
 
+> **Note**: The Pi runtime (`agent-runtime.ts`) referenced throughout this document has been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain. This analysis is historical.
+
 ## Executive Summary
 The highest-likelihood failure mode is **context overflow in the Pi runtime that does not throw at `session.prompt()`**, combined with **manager-specific response visibility rules**.
 

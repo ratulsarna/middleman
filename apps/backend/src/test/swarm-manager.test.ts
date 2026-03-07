@@ -1,3 +1,4 @@
+import { existsSync, readFileSync } from 'node:fs'
 import { mkdir, mkdtemp, readFile, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -87,6 +88,15 @@ class FakeRuntime {
   }
 }
 
+class ResumeInspectingRuntime extends FakeRuntime {
+  readonly resumedProviderState: { provider: string; resumeId: string } | null
+
+  constructor(descriptor: AgentDescriptor) {
+    super(descriptor)
+    this.resumedProviderState = readPersistedResumeState(descriptor)
+  }
+}
+
 class TestSwarmManager extends SwarmManager {
   readonly runtimeByAgentId = new Map<string, FakeRuntime>()
   readonly createdRuntimeIds: string[] = []
@@ -114,6 +124,92 @@ class TestSwarmManager extends SwarmManager {
     this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
     return runtime as unknown as SwarmAgentRuntime
   }
+}
+
+class ResumeInspectingSwarmManager extends TestSwarmManager {
+  readonly resumeStateByAgentId = new Map<string, { provider: string; resumeId: string } | null>()
+
+  protected override async createRuntimeForDescriptor(
+    descriptor: AgentDescriptor,
+    systemPrompt: string,
+  ): Promise<SwarmAgentRuntime> {
+    const runtime = new ResumeInspectingRuntime(descriptor)
+    this.createdRuntimeIds.push(descriptor.agentId)
+    this.runtimeByAgentId.set(descriptor.agentId, runtime)
+    this.systemPromptByAgentId.set(descriptor.agentId, systemPrompt)
+    this.resumeStateByAgentId.set(descriptor.agentId, runtime.resumedProviderState)
+    return runtime as unknown as SwarmAgentRuntime
+  }
+}
+
+function readPersistedResumeState(
+  descriptor: AgentDescriptor,
+): { provider: string; resumeId: string } | null {
+  const provider = descriptor.model.provider.trim().toLowerCase()
+  if (provider === 'claude-agent-sdk') {
+    const runtimeStateFile = `${descriptor.sessionFile}.claude-runtime-state.json`
+    if (existsSync(runtimeStateFile)) {
+      try {
+        const parsed = JSON.parse(readFileSync(runtimeStateFile, 'utf8')) as { sessionId?: unknown }
+        if (typeof parsed.sessionId === 'string' && parsed.sessionId.trim().length > 0) {
+          return {
+            provider,
+            resumeId: parsed.sessionId.trim(),
+          }
+        }
+      } catch {}
+    }
+  }
+
+  if (provider === 'openai-codex-app-server') {
+    const runtimeStateFile = `${descriptor.sessionFile}.codex-runtime-state.json`
+    if (existsSync(runtimeStateFile)) {
+      try {
+        const parsed = JSON.parse(readFileSync(runtimeStateFile, 'utf8')) as { threadId?: unknown }
+        if (typeof parsed.threadId === 'string' && parsed.threadId.trim().length > 0) {
+          return {
+            provider,
+            resumeId: parsed.threadId.trim(),
+          }
+        }
+      } catch {}
+    }
+  }
+
+  const sessionManager = SessionManager.open(descriptor.sessionFile)
+  const customType =
+    provider === 'claude-agent-sdk'
+      ? 'swarm_claude_agent_sdk_runtime_state'
+      : provider === 'openai-codex-app-server'
+        ? 'swarm_codex_runtime_state'
+        : undefined
+  if (!customType) {
+    return null
+  }
+
+  const entries = sessionManager
+    .getEntries()
+    .filter((entry) => entry.type === 'custom' && entry.customType === customType)
+  for (let index = entries.length - 1; index >= 0; index -= 1) {
+    const entry = entries[index]
+    if (entry?.type !== 'custom' || !entry.data || typeof entry.data !== 'object') {
+      continue
+    }
+
+    const maybeResumeId = provider === 'claude-agent-sdk'
+      ? (entry.data as { sessionId?: unknown }).sessionId
+      : (entry.data as { threadId?: unknown }).threadId
+    if (typeof maybeResumeId !== 'string' || maybeResumeId.trim().length === 0) {
+      continue
+    }
+
+    return {
+      provider,
+      resumeId: maybeResumeId.trim(),
+    }
+  }
+
+  return null
 }
 
 function appendSessionConversationMessage(sessionFile: string, agentId: string, text: string): void {
@@ -181,9 +277,9 @@ async function makeTempConfig(port = 8790): Promise<SwarmConfig> {
     managerId: 'manager',
     managerDisplayName: 'Manager',
     defaultModel: {
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'medium',
+      provider: 'claude-agent-sdk',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'xhigh',
     },
     defaultCwd: root,
     cwdAllowlistRoots: [root, join(root, 'worktrees')],
@@ -448,6 +544,11 @@ describe('SwarmManager', () => {
 
   it('sends manager user input as steer delivery, without SYSTEM prefixing, and with source metadata annotation', async () => {
     const config = await makeTempConfig()
+    config.defaultModel = {
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
+      thinkingLevel: 'xhigh',
+    }
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
@@ -1651,6 +1752,114 @@ describe('SwarmManager', () => {
     ).toBe(true)
   })
 
+  it('preserves persisted Claude manager resume state for lazy runtime recreation after restart', async () => {
+    const config = await makeTempConfig()
+    const createdAt = '2026-01-01T00:00:00.000Z'
+    const sessionFile = join(config.paths.sessionsDir, 'manager.jsonl')
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              status: 'idle',
+              createdAt,
+              updatedAt: createdAt,
+              cwd: config.defaultCwd,
+              model: {
+                provider: 'claude-agent-sdk',
+                modelId: 'claude-opus-4-6',
+                thinkingLevel: 'xhigh',
+              },
+              sessionFile,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const sessionManager = SessionManager.open(sessionFile)
+    sessionManager.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed' }],
+    } as any)
+    sessionManager.appendCustomEntry('swarm_claude_agent_sdk_runtime_state', { sessionId: 'claude-session-123' })
+    await writeFile(`${sessionFile}.claude-runtime-state.json`, `${JSON.stringify({ sessionId: 'claude-session-123' })}\n`, 'utf8')
+
+    const manager = new ResumeInspectingSwarmManager(config)
+    await manager.boot()
+    expect(manager.createdRuntimeIds).toEqual([])
+
+    await manager.handleUserMessage('continue after restart')
+
+    expect(manager.resumeStateByAgentId.get('manager')).toEqual({
+      provider: 'claude-agent-sdk',
+      resumeId: 'claude-session-123',
+    })
+  })
+
+  it('preserves persisted Codex manager resume state for lazy runtime recreation after restart', async () => {
+    const config = await makeTempConfig()
+    const createdAt = '2026-01-01T00:00:00.000Z'
+    const sessionFile = join(config.paths.sessionsDir, 'manager.jsonl')
+
+    await writeFile(
+      config.paths.agentsStoreFile,
+      JSON.stringify(
+        {
+          agents: [
+            {
+              agentId: 'manager',
+              displayName: 'Manager',
+              role: 'manager',
+              managerId: 'manager',
+              status: 'idle',
+              createdAt,
+              updatedAt: createdAt,
+              cwd: config.defaultCwd,
+              model: {
+                provider: 'openai-codex-app-server',
+                modelId: 'gpt-5-codex',
+                thinkingLevel: 'medium',
+              },
+              sessionFile,
+            },
+          ],
+        },
+        null,
+        2,
+      ),
+      'utf8',
+    )
+
+    const sessionManager = SessionManager.open(sessionFile)
+    sessionManager.appendMessage({
+      role: 'assistant',
+      content: [{ type: 'text', text: 'seed' }],
+    } as any)
+    sessionManager.appendCustomEntry('swarm_codex_runtime_state', { threadId: 'codex-thread-123' })
+    await writeFile(`${sessionFile}.codex-runtime-state.json`, `${JSON.stringify({ threadId: 'codex-thread-123' })}\n`, 'utf8')
+
+    const manager = new ResumeInspectingSwarmManager(config)
+    await manager.boot()
+    expect(manager.createdRuntimeIds).toEqual([])
+
+    await manager.handleUserMessage('continue after restart')
+
+    expect(manager.resumeStateByAgentId.get('manager')).toEqual({
+      provider: 'openai-codex-app-server',
+      resumeId: 'codex-thread-123',
+    })
+  })
+
   it('preserves web user and speak_to_user history when internal activity overflows history limits', async () => {
     const config = await makeTempConfig()
     const createdAt = '2026-01-01T00:00:00.000Z'
@@ -1781,7 +1990,9 @@ describe('SwarmManager', () => {
     const managerDescriptor = manager.listAgents().find((agent) => agent.agentId === 'manager')
     expect(managerDescriptor).toBeDefined()
     const managerRuntimeStateFile = `${managerDescriptor!.sessionFile}.claude-runtime-state.json`
+    const codexRuntimeStateFile = `${managerDescriptor!.sessionFile}.codex-runtime-state.json`
     await writeFile(managerRuntimeStateFile, `${JSON.stringify({ sessionId: 'stale-session' })}\n`, 'utf8')
+    await writeFile(codexRuntimeStateFile, `${JSON.stringify({ threadId: 'stale-thread' })}\n`, 'utf8')
 
     await manager.handleUserMessage('before reset')
     expect(manager.getConversationHistory('manager').some((message) => message.text === 'before reset')).toBe(true)
@@ -1795,6 +2006,7 @@ describe('SwarmManager', () => {
     expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(2)
     expect(manager.getConversationHistory('manager')).toHaveLength(0)
     await expect(readFile(managerRuntimeStateFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
+    await expect(readFile(codexRuntimeStateFile, 'utf8')).rejects.toMatchObject({ code: 'ENOENT' })
 
     const rebooted = new TestSwarmManager(config)
     await bootWithDefaultManager(rebooted, config)
@@ -1889,7 +2101,7 @@ describe('SwarmManager', () => {
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
-      model: 'pi-codex',
+      model: 'claude-agent-sdk',
     })
 
     const finalDescriptor = manager.getAgent('manager')
@@ -1910,14 +2122,14 @@ describe('SwarmManager', () => {
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
-      model: 'pi-opus',
+      model: 'codex-app',
       thinkingLevel: 'low',
     })
 
     expect(updated.resetApplied).toBe(true)
     expect(updated.manager.model).toEqual({
-      provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
       thinkingLevel: 'low',
     })
     expect(initialRuntime?.terminateCalls).toEqual([{ abort: true }])
@@ -1934,13 +2146,13 @@ describe('SwarmManager', () => {
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
     })
 
     expect(updated.resetApplied).toBe(true)
     expect(updated.manager.model).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
       thinkingLevel: 'xhigh',
     })
@@ -1952,7 +2164,7 @@ describe('SwarmManager', () => {
 
     const restoredManager = rebooted.getAgent('manager')
     expect(restoredManager?.model).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
       thinkingLevel: 'xhigh',
     })
@@ -1967,7 +2179,7 @@ describe('SwarmManager', () => {
 
     await manager.updateManager('manager', {
       managerId: 'manager',
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
     })
 
@@ -1977,7 +2189,7 @@ describe('SwarmManager', () => {
 
     const noOp = await manager.updateManager('manager', {
       managerId: 'manager',
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
     })
 
@@ -2018,9 +2230,9 @@ describe('SwarmManager', () => {
     await expect(
       manager.updateManager('manager', {
         managerId: 'manager',
-        model: 'pi-codex',
-        provider: 'anthropic',
-        modelId: 'claude-opus-4-6',
+        model: 'claude-agent-sdk',
+        provider: 'openai-codex-app-server',
+        modelId: 'default',
       }),
     ).rejects.toThrow(
       'update_manager.model cannot be combined with update_manager.provider or update_manager.modelId',
@@ -2068,14 +2280,14 @@ describe('SwarmManager', () => {
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
       spawnDefaultThinkingLevel: 'low',
     })
 
     expect(updated.resetApplied).toBe(false)
     expect(updated.manager.spawnDefaultModel).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'low',
     })
@@ -2088,13 +2300,13 @@ describe('SwarmManager', () => {
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
     })
 
     expect(updated.resetApplied).toBe(false)
     expect(updated.manager.spawnDefaultModel).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'xhigh',
     })
@@ -2107,7 +2319,7 @@ describe('SwarmManager', () => {
 
     await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
       spawnDefaultThinkingLevel: 'low',
     })
@@ -2131,7 +2343,7 @@ describe('SwarmManager', () => {
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
       spawnDefaultThinkingLevel: 'low',
     })
@@ -2143,26 +2355,31 @@ describe('SwarmManager', () => {
 
   it('preserves spawnDefaultModel when only manager model is updated', async () => {
     const config = await makeTempConfig()
+    config.defaultModel = {
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
+      thinkingLevel: 'xhigh',
+    }
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
 
     await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'openai-codex',
-      spawnDefaultModelId: 'gpt-5.3-codex',
+      spawnDefaultProvider: 'openai-codex-app-server',
+      spawnDefaultModelId: 'default',
       spawnDefaultThinkingLevel: 'low',
     })
 
     const updated = await manager.updateManager('manager', {
       managerId: 'manager',
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
     })
 
     expect(updated.resetApplied).toBe(true)
     expect(updated.manager.spawnDefaultModel).toEqual({
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
       thinkingLevel: 'low',
     })
   })
@@ -2175,7 +2392,7 @@ describe('SwarmManager', () => {
     await expect(
       manager.updateManager('manager', {
         managerId: 'manager',
-        spawnDefaultProvider: 'anthropic',
+        spawnDefaultProvider: 'claude-agent-sdk',
       }),
     ).rejects.toThrow(
       'update_manager.spawnDefaultProvider and update_manager.spawnDefaultModelId are required together',
@@ -2221,7 +2438,7 @@ describe('SwarmManager', () => {
       manager.updateManager('manager', {
         managerId: 'manager',
         clearSpawnDefault: true,
-        spawnDefaultProvider: 'anthropic',
+        spawnDefaultProvider: 'claude-agent-sdk',
         spawnDefaultModelId: 'claude-opus-4-6',
       }),
     ).rejects.toThrow(
@@ -2251,7 +2468,7 @@ describe('SwarmManager', () => {
     await expect(
       manager.updateManager('manager', {
         managerId: 'manager',
-        spawnDefaultProvider: 'anthropic',
+        spawnDefaultProvider: 'claude-agent-sdk',
         spawnDefaultModelId: '  ',
       }),
     ).rejects.toThrow('update_manager.spawnDefaultModelId must be a non-empty string when provided')
@@ -2264,7 +2481,7 @@ describe('SwarmManager', () => {
 
     await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
       spawnDefaultThinkingLevel: 'low',
     })
@@ -2274,7 +2491,7 @@ describe('SwarmManager', () => {
 
     const restoredManager = rebooted.getAgent('manager')
     expect(restoredManager?.spawnDefaultModel).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'low',
     })
@@ -2284,18 +2501,6 @@ describe('SwarmManager', () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
-
-    const codexManager = await manager.createManager('manager', {
-      name: 'Codex Manager',
-      cwd: config.defaultCwd,
-      model: 'pi-codex',
-    })
-
-    const opusManager = await manager.createManager('manager', {
-      name: 'Opus Manager',
-      cwd: config.defaultCwd,
-      model: 'pi-opus',
-    })
 
     const codexAppManager = await manager.createManager('manager', {
       name: 'Codex App Manager',
@@ -2308,16 +2513,6 @@ describe('SwarmManager', () => {
       model: 'claude-agent-sdk',
     })
 
-    expect(codexManager.model).toEqual({
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'xhigh',
-    })
-    expect(opusManager.model).toEqual({
-      provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
-      thinkingLevel: 'xhigh',
-    })
     expect(codexAppManager.model).toEqual({
       provider: 'openai-codex-app-server',
       modelId: 'default',
@@ -2330,7 +2525,7 @@ describe('SwarmManager', () => {
     })
   })
 
-  it('defaults create_manager to pi-codex mapping when model is omitted', async () => {
+  it('defaults create_manager to claude-agent-sdk mapping when model is omitted', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
@@ -2341,8 +2536,8 @@ describe('SwarmManager', () => {
     })
 
     expect(created.model).toEqual({
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      provider: 'claude-agent-sdk',
+      modelId: 'claude-opus-4-6',
       thinkingLevel: 'xhigh',
     })
   })
@@ -2355,13 +2550,13 @@ describe('SwarmManager', () => {
     const created = await manager.createManager('manager', {
       name: 'Explicit Manager',
       cwd: config.defaultCwd,
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
       thinkingLevel: 'high',
     })
 
     expect(created.model).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-sonnet-4-5',
       thinkingLevel: 'high',
     })
@@ -2376,8 +2571,8 @@ describe('SwarmManager', () => {
       manager.createManager('manager', {
         name: 'Invalid Mixed Manager',
         cwd: config.defaultCwd,
-        model: 'pi-codex',
-        provider: 'anthropic',
+        model: 'codex-app',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-opus-4-6',
       }),
     ).rejects.toThrow(
@@ -2430,7 +2625,7 @@ describe('SwarmManager', () => {
       manager.createManager('manager', {
         name: 'Preset With Thinking',
         cwd: config.defaultCwd,
-        model: 'pi-opus',
+        model: 'codex-app',
         thinkingLevel: 'low',
       }),
     ).rejects.toThrow(
@@ -2449,23 +2644,13 @@ describe('SwarmManager', () => {
         cwd: config.defaultCwd,
         model: 'invalid-model' as any,
       }),
-    ).rejects.toThrow('create_manager.model must be one of pi-codex|pi-opus|codex-app|claude-agent-sdk')
+    ).rejects.toThrow('create_manager.model must be one of codex-app|claude-agent-sdk')
   })
 
   it('maps spawn_agent model presets to canonical runtime models with highest reasoning', async () => {
     const config = await makeTempConfig()
     const manager = new TestSwarmManager(config)
     await bootWithDefaultManager(manager, config)
-
-    const codexWorker = await manager.spawnAgent('manager', {
-      agentId: 'Codex Worker',
-      model: 'pi-codex',
-    })
-
-    const opusWorker = await manager.spawnAgent('manager', {
-      agentId: 'Opus Worker',
-      model: 'pi-opus',
-    })
 
     const codexAppWorker = await manager.spawnAgent('manager', {
       agentId: 'Codex App Worker',
@@ -2476,16 +2661,6 @@ describe('SwarmManager', () => {
       model: 'claude-agent-sdk',
     })
 
-    expect(codexWorker.model).toEqual({
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'xhigh',
-    })
-    expect(opusWorker.model).toEqual({
-      provider: 'anthropic',
-      modelId: 'claude-opus-4-6',
-      thinkingLevel: 'xhigh',
-    })
     expect(codexAppWorker.model).toEqual({
       provider: 'openai-codex-app-server',
       modelId: 'default',
@@ -2508,7 +2683,7 @@ describe('SwarmManager', () => {
         agentId: 'Invalid Worker',
         model: 'invalid-model' as any,
       }),
-    ).rejects.toThrow('spawn_agent.model must be one of pi-codex|pi-opus|codex-app|claude-agent-sdk')
+    ).rejects.toThrow('spawn_agent.model must be one of codex-app|claude-agent-sdk')
   })
 
   it('spawns a worker with explicit provider, modelId, and custom thinkingLevel', async () => {
@@ -2518,13 +2693,13 @@ describe('SwarmManager', () => {
 
     const worker = await manager.spawnAgent('manager', {
       agentId: 'Explicit Model Worker',
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'low',
     })
 
     expect(worker.model).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'low',
     })
@@ -2537,12 +2712,12 @@ describe('SwarmManager', () => {
 
     const worker = await manager.spawnAgent('manager', {
       agentId: 'Explicit No Thinking Worker',
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
     })
 
     expect(worker.model).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'xhigh',
     })
@@ -2556,8 +2731,8 @@ describe('SwarmManager', () => {
     await expect(
       manager.spawnAgent('manager', {
         agentId: 'Invalid Mixed Worker',
-        model: 'pi-codex',
-        provider: 'anthropic',
+        model: 'codex-app',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-opus-4-6',
       }),
     ).rejects.toThrow(
@@ -2606,7 +2781,7 @@ describe('SwarmManager', () => {
     await expect(
       manager.spawnAgent('manager', {
         agentId: 'Preset With Thinking',
-        model: 'pi-opus',
+        model: 'codex-app',
         thinkingLevel: 'low',
       }),
     ).rejects.toThrow(
@@ -2664,7 +2839,7 @@ describe('SwarmManager', () => {
 
     await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
       spawnDefaultThinkingLevel: 'low',
     })
@@ -2674,7 +2849,7 @@ describe('SwarmManager', () => {
     })
 
     expect(worker.model).toEqual({
-      provider: 'anthropic',
+      provider: 'claude-agent-sdk',
       modelId: 'claude-opus-4-6',
       thinkingLevel: 'low',
     })
@@ -2687,21 +2862,21 @@ describe('SwarmManager', () => {
 
     await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
       spawnDefaultThinkingLevel: 'low',
     })
 
     const worker = await manager.spawnAgent('manager', {
       agentId: 'LLM Override Worker',
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
       thinkingLevel: 'xhigh',
     })
 
     expect(worker.model).toEqual({
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
       thinkingLevel: 'xhigh',
     })
   })
@@ -2713,19 +2888,19 @@ describe('SwarmManager', () => {
 
     await manager.updateManager('manager', {
       managerId: 'manager',
-      spawnDefaultProvider: 'anthropic',
+      spawnDefaultProvider: 'claude-agent-sdk',
       spawnDefaultModelId: 'claude-opus-4-6',
       spawnDefaultThinkingLevel: 'low',
     })
 
     const worker = await manager.spawnAgent('manager', {
       agentId: 'Preset Override Worker',
-      model: 'pi-codex',
+      model: 'codex-app',
     })
 
     expect(worker.model).toEqual({
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      provider: 'openai-codex-app-server',
+      modelId: 'default',
       thinkingLevel: 'xhigh',
     })
   })

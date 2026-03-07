@@ -188,6 +188,7 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
   });
 
   it("persists session id and resumes deliveries across runtime restarts", async () => {
+    const infoSpy = vi.spyOn(console, "info").mockImplementation(() => {});
     sdkMockState.streams.push(
       [
         {
@@ -273,8 +274,18 @@ describe("ClaudeAgentSdkRuntime behavior", () => {
       await readFile(getClaudeRuntimeStateFile(createDescriptor(rootDir).sessionFile), "utf8")
     ) as { sessionId?: string | null };
     expect(persistedState.sessionId).toBe("session-abc");
+    expect(
+      infoSpy.mock.calls.some(
+        (call) =>
+          typeof call[1] === "object" &&
+          call[1] &&
+          (call[1] as { event?: string; outcome?: string }).event === "resume_state" &&
+          (call[1] as { event?: string; outcome?: string }).outcome === "resume_success"
+      )
+    ).toBe(true);
 
     await runtimeAfterRestart.terminate({ abort: true });
+    infoSpy.mockRestore();
   });
 
   it("persists custom session entries even before assistant messages exist", async () => {

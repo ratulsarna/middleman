@@ -24,7 +24,7 @@ export const SETTINGS_AUTH_PROVIDER_META: Record<
 > = {
   anthropic: {
     label: 'Anthropic API key',
-    description: 'Used by pi-opus and Anthropic-backed managers/workers.',
+    description: 'Used by Claude Agent SDK managers/workers.',
     placeholder: 'sk-ant-...',
     helpUrl: 'https://console.anthropic.com/settings/keys',
   },

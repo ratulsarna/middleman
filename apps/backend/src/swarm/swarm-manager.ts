@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import type { ServerEvent } from "@nexus/protocol";
-import { getModel } from "@mariozechner/pi-ai";
+
 import {
   loadArchetypePromptRegistry,
   normalizeArchetypeId,
@@ -2495,13 +2495,9 @@ function normalizeManagedModelDescriptor(
   };
 }
 
-function isSupportedExplicitModelDescriptor(provider: string, modelId: string): boolean {
+function isSupportedExplicitModelDescriptor(provider: string, _modelId: string): boolean {
   const normalizedProvider = provider.trim().toLowerCase();
-  if (normalizedProvider === "openai-codex-app-server" || normalizedProvider === "claude-agent-sdk") {
-    return true;
-  }
-
-  return Boolean(getModel(provider as any, modelId as any));
+  return normalizedProvider === "openai-codex-app-server" || normalizedProvider === "claude-agent-sdk";
 }
 
 function normalizePromptOverride(value: string | undefined): string | undefined {
@@ -2540,15 +2536,12 @@ function readPositiveIntegerDetail(details: Record<string, unknown> | undefined,
   return value;
 }
 
-function runtimeLabelForProvider(provider: string): "pi" | "codex-app-server" | "claude-agent-sdk" {
+function runtimeLabelForProvider(provider: string): "codex-app-server" | "claude-agent-sdk" {
   const normalized = provider.trim().toLowerCase();
   if (normalized.includes("codex-app")) {
     return "codex-app-server";
   }
-  if (normalized === "claude-agent-sdk") {
-    return "claude-agent-sdk";
-  }
-  return "pi";
+  return "claude-agent-sdk";
 }
 
 function normalizeConversationAttachments(

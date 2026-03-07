@@ -1,5 +1,7 @@
 # Migration and Backwards Compatibility Audit
 
+> **Note**: The Pi runtime and `pi-codex`/`pi-opus` presets referenced in this document have been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain.
+
 Date: 2026-02-25
 
 ## Scope and method

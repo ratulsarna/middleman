@@ -63,13 +63,13 @@ describe('createConfig', () => {
       expect(config.allowNonManagerSubscriptions).toBe(true)
       expect(config.managerId).toBeUndefined()
       expect(config.defaultModel).toEqual({
-        provider: 'openai-codex',
-        modelId: 'gpt-5.3-codex',
+        provider: 'claude-agent-sdk',
+        modelId: 'claude-opus-4-6',
         thinkingLevel: 'xhigh',
       })
-      expect(config.modelPresetDefinitions?.['pi-codex'].descriptor).toEqual({
-        provider: 'openai-codex',
-        modelId: 'gpt-5.3-codex',
+      expect(config.modelPresetDefinitions?.['claude-agent-sdk'].descriptor).toEqual({
+        provider: 'claude-agent-sdk',
+        modelId: 'claude-opus-4-6',
         thinkingLevel: 'xhigh',
       })
       expect(config.providerThinkingLevelMappings?.codexAppServer.xhigh).toBe('xhigh')
@@ -128,12 +128,11 @@ describe('createConfig', () => {
         expect(config.managerId).toBeUndefined()
         expect(config.defaultCwd).toBe(config.paths.rootDir)
         expect(config.defaultModel).toEqual({
-          provider: 'openai-codex',
-          modelId: 'gpt-5.3-codex',
+          provider: 'claude-agent-sdk',
+          modelId: 'claude-opus-4-6',
           thinkingLevel: 'xhigh',
         })
-        expect(config.modelPresetDefinitions?.['pi-opus'].descriptor.modelId).toBe('claude-opus-4-6')
-        expect(config.providerThinkingLevelMappings?.piRuntime.medium).toBe('medium')
+        expect(config.modelPresetDefinitions?.['claude-agent-sdk'].descriptor.modelId).toBe('claude-opus-4-6')
         expect(config.cwdAllowlistRoots).not.toContain('/tmp/swarm-allowlist')
       }
     )

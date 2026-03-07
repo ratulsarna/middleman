@@ -6,7 +6,7 @@ import type {
 } from "./types.js";
 import { SWARM_MODEL_PRESETS } from "./types.js";
 
-export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "pi-codex";
+export const DEFAULT_SWARM_MODEL_PRESET: SwarmModelPreset = "claude-agent-sdk";
 
 interface ModelPresetOptions {
   presetDefinitions?: SwarmModelPresetDefinitions;

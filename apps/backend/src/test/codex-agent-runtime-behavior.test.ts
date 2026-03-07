@@ -88,6 +88,10 @@ function createDeferred<T>(): { promise: Promise<T>; resolve: (value: T) => void
   return { promise, resolve }
 }
 
+function getCodexRuntimeStateFile(sessionFile: string): string {
+  return `${sessionFile}.codex-runtime-state.json`
+}
+
 beforeEach(() => {
   rpcMockState.instances.length = 0
   rpcMockState.requestImpl.mockReset()
@@ -129,11 +133,16 @@ describe('CodexAgentRuntime behavior', () => {
     expect(persistedSession).toContain('"type":"session"')
     expect(persistedSession).toContain('"customType":"swarm_codex_runtime_state"')
     expect(persistedSession).toContain('"threadId":"thread-bootstrap"')
+    const persistedState = JSON.parse(await readFile(getCodexRuntimeStateFile(descriptor.sessionFile), 'utf8')) as {
+      threadId?: string
+    }
+    expect(persistedState.threadId).toBe('thread-bootstrap')
 
     await runtime.terminate({ abort: false })
   })
 
   it('resumes persisted codex thread id across runtime restart', async () => {
+    const infoSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
     const tempDir = await mkdtemp(join(tmpdir(), 'swarm-codex-runtime-'))
     const descriptor = makeDescriptor(tempDir, {
       modelId: 'restart-model',
@@ -199,6 +208,21 @@ describe('CodexAgentRuntime behavior', () => {
     expect(firstInstance.requestCalls.some((entry: { method: string }) => entry.method === 'thread/resume')).toBe(false)
     expect(secondInstance.requestCalls.some((entry: { method: string }) => entry.method === 'thread/resume')).toBe(true)
     expect(secondInstance.requestCalls.some((entry: { method: string }) => entry.method === 'thread/start')).toBe(false)
+    expect(
+      infoSpy.mock.calls.some(
+        (call) =>
+          typeof call[1] === 'object' &&
+          call[1] &&
+          (call[1] as { event?: string; outcome?: string }).event === 'resume_state' &&
+          (call[1] as { event?: string; outcome?: string }).outcome === 'resume_success',
+      ),
+    ).toBe(true)
+    const persistedState = JSON.parse(await readFile(getCodexRuntimeStateFile(descriptor.sessionFile), 'utf8')) as {
+      threadId?: string
+    }
+    expect(persistedState.threadId).toBe('thread-first')
+
+    infoSpy.mockRestore()
   })
 
   it('authenticates with CODEX_API_KEY and resumes a persisted thread', async () => {

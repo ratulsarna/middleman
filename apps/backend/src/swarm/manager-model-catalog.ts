@@ -1,4 +1,3 @@
-import { getModels, supportsXhigh } from "@mariozechner/pi-ai";
 import {
   THINKING_LEVELS,
   type ManagerModelCatalogModel,
@@ -10,9 +9,6 @@ import { CodexJsonRpcClient } from "./codex-jsonrpc-client.js";
 
 const DEFAULT_CODEX_PROBE_TIMEOUT_MS = 4_000;
 const DEFAULT_CODEX_PROBE_TTL_MS = 60_000;
-const THINKING_LEVELS_WITHOUT_XHIGH = THINKING_LEVELS.filter(
-  (thinkingLevel) => thinkingLevel !== "xhigh"
-) as ThinkingLevel[];
 const CODEX_PROVIDER_LABEL = "OpenAI Codex App Server";
 const CODEX_PROVIDER_ID = "openai-codex-app-server";
 const CODEX_APP_SERVER_MODEL_LIST_METHOD = "model/list";
@@ -36,12 +32,6 @@ const THINKING_LEVEL_RANK: Record<ThinkingLevel, number> = {
 };
 
 type CodexReasoningEffort = "none" | "minimal" | "low" | "medium" | "high" | "xhigh";
-
-interface CatalogModelLike {
-  id?: unknown;
-  name?: unknown;
-  reasoning?: unknown;
-}
 
 interface CachedCodexModels {
   fetchedAtMs: number;
@@ -79,38 +69,17 @@ export class ManagerModelCatalogService {
       warnings.push(codexProviderModels.warning);
     }
 
-    const openAiCodexModels = toCatalogModelsFromPiProvider(
-      getModels("openai-codex") as CatalogModelLike[],
-      (model) => supportsXhigh(model as any)
-    );
-    const anthropicModels = toCatalogModelsFromPiProvider(
-      getModels("anthropic") as CatalogModelLike[],
-      (model) => supportsXhigh(model as any)
-    );
-
     const providers: ManagerModelCatalogProvider[] = [
-      {
-        provider: "openai-codex",
-        providerLabel: "OpenAI Codex",
-        surfaces: ["create_manager", "manager_settings", "spawn_default"],
-        models: openAiCodexModels
-      },
-      {
-        provider: "anthropic",
-        providerLabel: "Anthropic",
-        surfaces: ["create_manager", "manager_settings", "spawn_default"],
-        models: anthropicModels
-      },
       {
         provider: "claude-agent-sdk",
         providerLabel: "Claude Agent SDK",
         surfaces: ["create_manager", "manager_settings", "spawn_default"],
-        models: anthropicModels.map(cloneCatalogModel)
+        models: buildClaudeAgentSdkModels()
       },
       {
         provider: CODEX_PROVIDER_ID,
         providerLabel: CODEX_PROVIDER_LABEL,
-        surfaces: ["manager_settings", "spawn_default"],
+        surfaces: ["create_manager", "manager_settings", "spawn_default"],
         models: codexProviderModels.models
       }
     ];
@@ -202,43 +171,6 @@ export class ManagerModelCatalogService {
   }
 }
 
-export function toCatalogModelsFromPiProvider(
-  inputModels: CatalogModelLike[],
-  modelSupportsXhigh: (model: CatalogModelLike) => boolean
-): ManagerModelCatalogModel[] {
-  const modelsById = new Map<string, ManagerModelCatalogModel>();
-
-  for (const model of inputModels) {
-    const modelId = normalizeModelId(model.id);
-    if (!modelId) {
-      continue;
-    }
-
-    const normalizedModelId = modelId.toLowerCase();
-    if (modelsById.has(normalizedModelId)) {
-      continue;
-    }
-
-    const supportsReasoning = model.reasoning === true;
-    const supportsXhighLevel = supportsReasoning && modelSupportsXhigh(model);
-
-    const { allowedThinkingLevels, defaultThinkingLevel } = resolvePiThinkingLevels(
-      supportsReasoning,
-      supportsXhighLevel
-    );
-
-    const modelLabel = normalizeOptionalString(model.name) ?? modelId;
-    modelsById.set(normalizedModelId, {
-      modelId,
-      modelLabel,
-      allowedThinkingLevels: [...allowedThinkingLevels],
-      defaultThinkingLevel
-    });
-  }
-
-  return sortCatalogModels(Array.from(modelsById.values()));
-}
-
 export function parseCodexModelListData(data: unknown): ManagerModelCatalogModel[] {
   const records = resolveCodexModelListEntries(data);
   const modelsById = new Map<string, ManagerModelCatalogModel>();
@@ -285,30 +217,6 @@ export function parseCodexModelListData(data: unknown): ManagerModelCatalogModel
   }
 
   return sortCatalogModels(Array.from(modelsById.values()));
-}
-
-function resolvePiThinkingLevels(
-  supportsReasoning: boolean,
-  supportsXhighLevel: boolean
-): { allowedThinkingLevels: ThinkingLevel[]; defaultThinkingLevel: ThinkingLevel } {
-  if (!supportsReasoning) {
-    return {
-      allowedThinkingLevels: ["off"],
-      defaultThinkingLevel: "off"
-    };
-  }
-
-  if (supportsXhighLevel) {
-    return {
-      allowedThinkingLevels: [...THINKING_LEVELS],
-      defaultThinkingLevel: "xhigh"
-    };
-  }
-
-  return {
-    allowedThinkingLevels: [...THINKING_LEVELS_WITHOUT_XHIGH],
-    defaultThinkingLevel: "high"
-  };
 }
 
 function resolveCodexModelListEntries(data: unknown): unknown[] {
@@ -410,6 +318,17 @@ function parseCodexReasoningEffort(value: unknown): CodexReasoningEffort | undef
     default:
       return undefined;
   }
+}
+
+function buildClaudeAgentSdkModels(): ManagerModelCatalogModel[] {
+  return [
+    {
+      modelId: "claude-opus-4-6",
+      modelLabel: "Claude Opus 4.6",
+      allowedThinkingLevels: [...THINKING_LEVELS],
+      defaultThinkingLevel: "xhigh"
+    }
+  ];
 }
 
 function buildCodexFallbackModels(): ManagerModelCatalogModel[] {

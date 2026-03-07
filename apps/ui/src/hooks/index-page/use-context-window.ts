@@ -5,8 +5,6 @@ import type { AgentContextUsage, AgentDescriptor, ConversationEntry, ManagerMode
 
 const CHARS_PER_TOKEN_ESTIMATE = 4
 const CONTEXT_WINDOW_BY_PRESET: Record<ManagerModelPreset, number> = {
-  'pi-opus': 200_000,
-  'pi-codex': 1_048_576,
   'codex-app': 1_048_576,
   'claude-agent-sdk': 200_000,
 }

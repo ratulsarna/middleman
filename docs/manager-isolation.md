@@ -1,5 +1,7 @@
 # Manager Isolation Map
 
+> **Note**: The Pi runtime (`createPiRuntimeForDescriptor`) referenced in this document has been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain.
+
 This document maps current storage/runtime boundaries in the swarm backend, based on:
 
 - `apps/backend/src/config.ts`

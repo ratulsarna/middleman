@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import { SessionManager, type ToolDefinition } from "@mariozechner/pi-coding-agent";
 import { CodexJsonRpcClient, type JsonRpcNotificationMessage, type JsonRpcRequestMessage } from "./codex-jsonrpc-client.js";
 import {
@@ -38,6 +40,7 @@ import type {
 } from "./types.js";
 
 const CODEX_RUNTIME_STATE_ENTRY_TYPE = "swarm_codex_runtime_state";
+const CODEX_RUNTIME_STATE_FILE_SUFFIX = ".codex-runtime-state.json";
 const CODEX_SANDBOX_MODE = "danger-full-access";
 
 interface CodexRuntimeState {
@@ -86,6 +89,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private readonly sessionManager: SessionManager;
   private readonly toolBridge: CodexToolBridge;
   private readonly sandboxSettings: CodexSandboxSettings;
+  private readonly runtimeStateFile: string;
 
   private readonly rpc: CodexJsonRpcClient;
 
@@ -118,6 +122,7 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     this.status = options.descriptor.status;
 
     this.sessionManager = SessionManager.open(options.descriptor.sessionFile);
+    this.runtimeStateFile = `${options.descriptor.sessionFile}${CODEX_RUNTIME_STATE_FILE_SUFFIX}`;
     this.toolBridge = createCodexToolBridge(options.tools);
     this.sandboxSettings = buildCodexSandboxSettings();
     this.thinkingLevelToEffort = {
@@ -381,6 +386,10 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
   private async bootstrapThread(): Promise<void> {
     const persisted = this.readPersistedRuntimeState();
     if (persisted?.threadId) {
+      this.logRuntimeInfo("resume_state", {
+        outcome: "resume_attempt",
+        persistedThreadId: persisted.threadId
+      });
       try {
         const resumed = await this.rpc.request<{ thread?: { id?: unknown } }>("thread/resume", {
           threadId: persisted.threadId,
@@ -396,6 +405,11 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
         if (resumedThreadId) {
           this.threadId = resumedThreadId;
           this.persistRuntimeState();
+          this.logRuntimeInfo("resume_state", {
+            outcome: "resume_success",
+            persistedThreadId: persisted.threadId,
+            resumedThreadId
+          });
           return;
         }
       } catch (error) {
@@ -423,9 +437,21 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
 
     this.threadId = startedThreadId;
     this.persistRuntimeState();
+    this.logRuntimeInfo("resume_state", {
+      outcome: persisted?.threadId ? "fresh_start_after_resume_failure" : "fresh_start",
+      ...(persisted?.threadId ? { persistedThreadId: persisted.threadId } : {}),
+      startedThreadId
+    });
   }
 
   private readPersistedRuntimeState(): CodexRuntimeState | undefined {
+    const fromFile = this.readPersistedRuntimeStateFromFile();
+    if (fromFile && typeof fromFile.threadId === "string" && fromFile.threadId.trim().length > 0) {
+      return {
+        threadId: fromFile.threadId.trim()
+      };
+    }
+
     const entries = this.getCustomEntries(CODEX_RUNTIME_STATE_ENTRY_TYPE);
 
     for (let index = entries.length - 1; index >= 0; index -= 1) {
@@ -447,9 +473,50 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
       return;
     }
 
+    this.writePersistedRuntimeStateFileSafe({
+      threadId: this.threadId
+    });
     this.appendCustomEntry(CODEX_RUNTIME_STATE_ENTRY_TYPE, {
       threadId: this.threadId
     });
+  }
+
+  private readPersistedRuntimeStateFromFile(): { threadId?: unknown } | undefined {
+    let raw: string;
+    try {
+      raw = readFileSync(this.runtimeStateFile, "utf8");
+    } catch {
+      return undefined;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+
+    if (!parsed || typeof parsed !== "object" || !("threadId" in parsed)) {
+      return undefined;
+    }
+
+    return parsed as { threadId?: unknown };
+  }
+
+  private writePersistedRuntimeStateFile(state: { threadId: string }): void {
+    mkdirSync(dirname(this.runtimeStateFile), { recursive: true });
+    writeFileSync(this.runtimeStateFile, `${JSON.stringify(state)}\n`, "utf8");
+  }
+
+  private writePersistedRuntimeStateFileSafe(state: { threadId: string }): void {
+    try {
+      this.writePersistedRuntimeStateFile(state);
+    } catch (error) {
+      this.logRuntimeError("startup", error, {
+        stage: "persist_runtime_state_file",
+        sessionFile: this.descriptor.sessionFile
+      });
+    }
   }
 
   private async startTurn(message: RuntimeUserMessage): Promise<void> {
@@ -995,7 +1062,7 @@ function buildCodexSandboxSettings(): CodexSandboxSettings {
 function normalizeCodexStartupError(error: unknown): Error {
   if (isSpawnEnoentError(error)) {
     return new Error(
-      "Codex CLI is not installed or not available on PATH. Install codex or choose a pi-* model preset."
+      "Codex CLI is not installed or not available on PATH. Install codex or choose the claude-agent-sdk preset."
     );
   }
 

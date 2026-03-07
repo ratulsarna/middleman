@@ -1,14 +1,4 @@
-import { getModel, type Model } from "@mariozechner/pi-ai";
 import { resolve } from "node:path";
-import {
-  AuthStorage,
-  DefaultResourceLoader,
-  createAgentSession,
-  ModelRegistry,
-  SessionManager,
-  type AgentSession
-} from "@mariozechner/pi-coding-agent";
-import { AgentRuntime } from "./agent-runtime.js";
 import { ClaudeAgentSdkRuntime } from "./claude-agent-sdk-runtime.js";
 import { readClaudeOutputStyleLenient } from "./claude-output-style-settings.js";
 import { CodexAgentRuntime } from "./codex-agent-runtime.js";
@@ -64,110 +54,10 @@ export class RuntimeFactory {
       return this.createCodexRuntimeForDescriptor(descriptor, systemPrompt);
     }
 
-    return this.createPiRuntimeForDescriptor(descriptor, systemPrompt);
-  }
-
-  private async createPiRuntimeForDescriptor(
-    descriptor: AgentDescriptor,
-    systemPrompt: string
-  ): Promise<SwarmAgentRuntime> {
-    const swarmTools = buildSwarmTools(this.deps.host, descriptor);
-    const thinkingLevel = normalizeThinkingLevel(descriptor.model.thinkingLevel);
-    const runtimeAgentDir =
-      descriptor.role === "manager" ? this.deps.config.paths.managerAgentDir : this.deps.config.paths.agentDir;
-
-    this.deps.logDebug("runtime:create:start", {
-      runtime: "pi",
-      agentId: descriptor.agentId,
-      role: descriptor.role,
-      model: descriptor.model,
-      archetypeId: descriptor.archetypeId,
-      cwd: descriptor.cwd,
-      authFile: this.deps.config.paths.authFile,
-      agentDir: runtimeAgentDir,
-      managerSystemPromptSource:
-        descriptor.role === "manager" ? "archetype:manager" : undefined
-    });
-
-    const authStorage = AuthStorage.create(this.deps.config.paths.authFile);
-    const modelRegistry = new ModelRegistry(authStorage);
-    const swarmContextFiles = await this.deps.getSwarmContextFiles(descriptor.cwd);
-    const applyRuntimeContext = (base: { agentsFiles: Array<{ path: string; content: string }> }) => ({
-      agentsFiles: this.mergeSwarmContextFiles(base.agentsFiles, swarmContextFiles)
-    });
-
-    const resourceLoader =
-      descriptor.role === "manager"
-        ? new DefaultResourceLoader({
-            cwd: descriptor.cwd,
-            agentDir: runtimeAgentDir,
-            agentsFilesOverride: applyRuntimeContext,
-            // Manager prompt comes from the archetype prompt registry.
-            systemPrompt,
-            appendSystemPromptOverride: () => []
-          })
-        : new DefaultResourceLoader({
-            cwd: descriptor.cwd,
-            agentDir: runtimeAgentDir,
-            agentsFilesOverride: applyRuntimeContext,
-            appendSystemPromptOverride: (base) => [...base, systemPrompt]
-          });
-    await resourceLoader.reload();
-
-    const model = this.resolveModel(modelRegistry, descriptor.model);
-    if (!model) {
-      throw new Error(
-        `Unable to resolve model ${descriptor.model.provider}/${descriptor.model.modelId}. ` +
-          "Install a model supported by @mariozechner/pi-ai."
-      );
-    }
-
-    const { session } = await createAgentSession({
-      cwd: descriptor.cwd,
-      agentDir: runtimeAgentDir,
-      authStorage,
-      modelRegistry,
-      model,
-      thinkingLevel: thinkingLevel as any,
-      sessionManager: SessionManager.open(descriptor.sessionFile),
-      resourceLoader,
-      customTools: swarmTools
-    });
-
-    const activeToolNames = new Set(session.getActiveToolNames());
-    for (const tool of swarmTools) {
-      activeToolNames.add(tool.name);
-    }
-    session.setActiveToolsByName(Array.from(activeToolNames));
-
-    this.deps.logDebug("runtime:create:ready", {
-      runtime: "pi",
-      agentId: descriptor.agentId,
-      activeTools: session.getActiveToolNames(),
-      systemPromptPreview: previewForLog(session.systemPrompt, 240),
-      containsSpeakToUserRule:
-        descriptor.role === "manager" ? session.systemPrompt.includes("speak_to_user") : undefined
-    });
-
-    return new AgentRuntime({
-      descriptor,
-      session: session as AgentSession,
-      callbacks: {
-        onStatusChange: async (agentId, status, pendingCount, contextUsage) => {
-          await this.deps.callbacks.onStatusChange(agentId, status, pendingCount, contextUsage);
-        },
-        onSessionEvent: async (agentId, event) => {
-          await this.deps.callbacks.onSessionEvent(agentId, event);
-        },
-        onAgentEnd: async (agentId) => {
-          await this.deps.callbacks.onAgentEnd(agentId);
-        },
-        onRuntimeError: async (agentId, error) => {
-          await this.deps.callbacks.onRuntimeError(agentId, error);
-        }
-      },
-      now: this.deps.now
-    });
+    throw new Error(
+      `Unsupported provider "${descriptor.model.provider}". ` +
+        `Only "claude-agent-sdk" and "openai-codex-app-server" are supported.`
+    );
   }
 
   private async createCodexRuntimeForDescriptor(
@@ -327,16 +217,6 @@ export class RuntimeFactory {
     return sections.join("\n\n");
   }
 
-  private mergeSwarmContextFiles(
-    baseAgentsFiles: Array<{ path: string; content: string }>,
-    swarmContextFiles: Array<{ path: string; content: string }>
-  ): Array<{ path: string; content: string }> {
-    const swarmContextPaths = new Set(swarmContextFiles.map((entry) => entry.path));
-    const withoutSwarm = baseAgentsFiles.filter((entry) => !swarmContextPaths.has(entry.path));
-
-    return [...withoutSwarm, ...swarmContextFiles];
-  }
-
   private async readManagerClaudeOutputStyleSelection(descriptor: AgentDescriptor): Promise<boolean> {
     if (descriptor.role !== "manager") {
       return false;
@@ -354,16 +234,6 @@ export class RuntimeFactory {
 
     return Boolean(settingsResult.outputStyle);
   }
-
-  private resolveModel(modelRegistry: ModelRegistry, descriptor: AgentModelDescriptor): Model<any> | undefined {
-    const direct = modelRegistry.find(descriptor.provider, descriptor.modelId);
-    if (direct) return direct;
-
-    const fromCatalog = getModel(descriptor.provider as any, descriptor.modelId as any);
-    if (fromCatalog) return fromCatalog;
-
-    return undefined;
-  }
 }
 
 function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
@@ -372,10 +242,6 @@ function isCodexAppServerModelDescriptor(descriptor: Pick<AgentModelDescriptor, 
 
 function isClaudeAgentSdkModelDescriptor(descriptor: Pick<AgentModelDescriptor, "provider">): boolean {
   return descriptor.provider.trim().toLowerCase() === "claude-agent-sdk";
-}
-
-function normalizeThinkingLevel(level: string): string {
-  return level === "x-high" ? "xhigh" : level;
 }
 
 function previewForLog(text: string, maxLength = 160): string {
