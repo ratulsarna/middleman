@@ -45,7 +45,7 @@ describe('ToolLogRow', () => {
   it('renders category-first completed summaries for known categories', () => {
     const expectations: Array<{ category: ToolCallCategory; expectedText: string }> = [
       { category: 'shell', expectedText: 'Ran shell command' },
-      { category: 'file', expectedText: 'Ran file operation' },
+      { category: 'file', expectedText: 'File operation' },
       { category: 'agent', expectedText: 'Ran agent task' },
       { category: 'mcp', expectedText: 'Ran MCP tool' },
       { category: 'web', expectedText: 'Ran web tool' },

@@ -32,6 +32,10 @@ type ToolDetailConfig = {
   detailKeys?: string[]
   icon?: LucideIcon
   getDetail?: (input: Record<string, unknown>) => string | null
+  label?: string
+  activeLabel?: string
+  /** If true, suppress the raw input JSON block when expanded (path already in summary) */
+  hideInput?: boolean
 }
 
 type CategoryMessageConfig = {
@@ -51,7 +55,7 @@ const CATEGORY_MESSAGE_CONFIG: Record<ToolCallCategory, CategoryMessageConfig> =
     icon: Terminal,
   },
   file: {
-    label: 'Ran file operation',
+    label: 'File operation',
     activeLabel: 'Running file operation',
     cancelledLabel: 'File operation cancelled',
     errorLabel: 'File operation failed',
@@ -123,24 +127,47 @@ const TOOL_DETAIL_CONFIG: Record<string, ToolDetailConfig> = {
     detailKeys: ['description', 'command', 'cmd'],
   },
   read: {
-    detailKeys: ['path'],
+    detailKeys: ['path', 'file_path'],
+    label: 'Read file',
+    activeLabel: 'Reading file',
+    hideInput: true,
   },
   write: {
-    detailKeys: ['path'],
+    detailKeys: ['path', 'file_path'],
+    label: 'Wrote file',
+    activeLabel: 'Writing file',
   },
   edit: {
-    detailKeys: ['path'],
+    detailKeys: ['path', 'file_path'],
+    label: 'Edited file',
+    activeLabel: 'Editing file',
+  },
+  glob: {
+    detailKeys: ['pattern'],
+    label: 'Searched files',
+    activeLabel: 'Searching files',
+    hideInput: true,
+  },
+  grep: {
+    detailKeys: ['pattern'],
+    label: 'Searched content',
+    activeLabel: 'Searching content',
+    hideInput: true,
   },
   file_change: {
     detailKeys: ['path'],
+    label: 'Changed file',
+    activeLabel: 'Changing file',
   },
   apply_patch: {
     detailKeys: ['patch'],
+    label: 'Applied patch',
+    activeLabel: 'Applying patch',
     getDetail: (input) => {
       const patch = pickString(input, ['patch'])
       if (!patch) return null
       const match = patch.match(/^---\s+[ab]\/(.+)$/m)
-      return match ? truncate(match[1], 72) : 'Applied patch'
+      return match ? truncate(match[1], 72) : null
     },
   },
   list_agents: {
@@ -258,16 +285,20 @@ function getFriendlyToolMessage(
   input: Record<string, unknown>,
   status: ToolDisplayStatus,
 ): string {
-  const config = CATEGORY_MESSAGE_CONFIG[category] ?? CATEGORY_MESSAGE_CONFIG.unknown
+  const categoryConfig = CATEGORY_MESSAGE_CONFIG[category] ?? CATEGORY_MESSAGE_CONFIG.unknown
+  const normalizedToolName = (toolName ?? '').trim().toLowerCase()
+  const toolConfig = normalizedToolName ? TOOL_DETAIL_CONFIG[normalizedToolName] : undefined
 
-  const baseLabel =
-    status === 'completed'
-      ? config.label
-      : status === 'cancelled'
-        ? config.cancelledLabel
-        : status === 'error'
-        ? config.errorLabel
-        : config.activeLabel
+  let baseLabel: string
+  if (status === 'pending') {
+    baseLabel = toolConfig?.activeLabel ?? categoryConfig.activeLabel
+  } else if (status === 'cancelled') {
+    baseLabel = categoryConfig.cancelledLabel
+  } else if (status === 'error') {
+    baseLabel = categoryConfig.errorLabel
+  } else {
+    baseLabel = toolConfig?.label ?? categoryConfig.label
+  }
 
   const detail = getToolDetail(category, toolName, input)
   return detail ? `${baseLabel}: ${detail}` : baseLabel
@@ -367,6 +398,10 @@ function ToolExecutionLogRow({ entry }: { entry: ToolExecutionDisplayEntry }) {
     return extractFileDiffData(entry.toolName, entry.inputPayload)
   }, [entry.classification.category, entry.toolName, entry.inputPayload])
 
+  const normalizedToolName = (entry.toolName ?? '').trim().toLowerCase()
+  const toolConfig = normalizedToolName ? TOOL_DETAIL_CONFIG[normalizedToolName] : undefined
+  const isFileCategory = entry.classification.category === 'file'
+
   return (
     <div className="rounded-md">
       <Button
@@ -432,11 +467,11 @@ function ToolExecutionLogRow({ entry }: { entry: ToolExecutionDisplayEntry }) {
           <div className="ml-6 mt-1 space-y-2 pb-1">
             {diffData ? (
               <FileDiffView data={diffData} />
-            ) : entry.inputPayload ? (
+            ) : entry.inputPayload && !toolConfig?.hideInput ? (
               <ToolPayloadBlock label="Input" value={entry.inputPayload} tone="neutral" />
             ) : null}
 
-            {outputPayload && !(diffData && isBoilerplateResult(outputPayload)) ? (
+            {outputPayload && !(isFileCategory && displayStatus === 'completed' && isBoilerplateResult(outputPayload)) ? (
               <ToolPayloadBlock
                 label={outputLabel}
                 value={outputPayload}
