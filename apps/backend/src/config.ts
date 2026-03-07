@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { homedir } from "node:os";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { normalizeAllowlistRoots } from "./swarm/cwd-policy.js";
 import {
   DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS,
@@ -23,7 +23,6 @@ export function createConfig(): SwarmConfig {
   const uploadsDir = resolve(dataDir, "uploads");
   const authDir = resolve(dataDir, "auth");
   const authFile = resolve(authDir, "auth.json");
-  migrateLegacyPiAuthFileIfNeeded(authFile);
   const agentDir = resolve(dataDir, "agent");
   const managerAgentDir = resolve(agentDir, "manager");
   const repoArchetypesDir = resolve(rootDir, ".swarm", "archetypes");
@@ -37,7 +36,7 @@ export function createConfig(): SwarmConfig {
   const providerThinkingLevelMappings = cloneProviderThinkingLevelMappings(
     DEFAULT_PROVIDER_THINKING_LEVEL_MAPPINGS
   );
-  const defaultModel = { ...modelPresetDefinitions["pi-codex"].descriptor };
+  const defaultModel = { ...modelPresetDefinitions["claude-agent-sdk"].descriptor };
 
   return {
     host: process.env.NEXUS_HOST ?? "127.0.0.1",
@@ -72,14 +71,6 @@ function cloneModelPresetDefinitions(
   definitions: SwarmModelPresetDefinitions
 ): SwarmModelPresetDefinitions {
   return {
-    "pi-codex": {
-      descriptor: { ...definitions["pi-codex"].descriptor },
-      aliases: definitions["pi-codex"].aliases?.map((alias) => ({ ...alias }))
-    },
-    "pi-opus": {
-      descriptor: { ...definitions["pi-opus"].descriptor },
-      aliases: definitions["pi-opus"].aliases?.map((alias) => ({ ...alias }))
-    },
     "codex-app": {
       descriptor: { ...definitions["codex-app"].descriptor },
       aliases: definitions["codex-app"].aliases?.map((alias) => ({ ...alias }))
@@ -104,7 +95,6 @@ function cloneProviderThinkingLevelMappings(
       high: { ...mappings.claudeAgentSdk.high },
       xhigh: { ...mappings.claudeAgentSdk.xhigh }
     },
-    piRuntime: { ...mappings.piRuntime }
   };
 }
 
@@ -131,21 +121,3 @@ function isSwarmRepoRoot(path: string): boolean {
   return existsSync(resolve(path, "pnpm-workspace.yaml")) && existsSync(resolve(path, "apps"));
 }
 
-function migrateLegacyPiAuthFileIfNeeded(targetAuthFile: string): void {
-  if (process.env.NODE_ENV === "test" || process.env.VITEST) {
-    return;
-  }
-
-  const legacyPiAuthFile = resolve(homedir(), ".pi", "agent", "auth.json");
-  if (existsSync(targetAuthFile) || !existsSync(legacyPiAuthFile)) {
-    return;
-  }
-
-  try {
-    mkdirSync(dirname(targetAuthFile), { recursive: true });
-    copyFileSync(legacyPiAuthFile, targetAuthFile);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[swarm] Failed to migrate legacy Pi auth file: ${message}`);
-  }
-}

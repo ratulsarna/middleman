@@ -3,6 +3,7 @@ import { dirname } from "node:path";
 import type { AgentDescriptor, AgentsStoreFile, SwarmConfig } from "./types.js";
 
 const CLAUDE_RUNTIME_STATE_FILE_SUFFIX = ".claude-runtime-state.json";
+const CODEX_RUNTIME_STATE_FILE_SUFFIX = ".codex-runtime-state.json";
 
 interface PersistenceServiceDependencies {
   config: SwarmConfig;
@@ -35,6 +36,7 @@ export class PersistenceService {
   async deleteManagerSessionFile(sessionFile: string): Promise<void> {
     await this.deleteFileIfExists(sessionFile);
     await this.deleteFileIfExists(`${sessionFile}${CLAUDE_RUNTIME_STATE_FILE_SUFFIX}`);
+    await this.deleteFileIfExists(`${sessionFile}${CODEX_RUNTIME_STATE_FILE_SUFFIX}`);
   }
 
   async loadStore(): Promise<AgentsStoreFile> {

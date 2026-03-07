@@ -42,28 +42,6 @@ function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?:
   const provider = agent.model.provider.toLowerCase()
   const preset = inferModelPreset(agent)
 
-  if (preset === 'pi-opus') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/pi-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img src="/agents/claude-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain', className)} />
-      </span>
-    )
-  }
-
-  if (preset === 'pi-codex') {
-    return (
-      <span className="inline-flex items-center gap-0.5" aria-hidden="true">
-        <img src="/pi-logo.svg" alt="" className={cn('size-3 shrink-0 object-contain dark:invert', className)} />
-        <img
-          src="/agents/codex-logo.svg"
-          alt=""
-          className={cn('size-3 shrink-0 object-contain dark:invert', className)}
-        />
-      </span>
-    )
-  }
-
   if (preset === 'codex-app') {
     return (
       <span className="inline-flex items-center gap-0.5" aria-hidden="true">
@@ -85,11 +63,7 @@ function RuntimeIcon({ agent, className }: { agent: AgentDescriptor; className?:
 }
 
 function getModelLabel(agent: AgentDescriptor, preset: ManagerModelPreset | undefined): string {
-  if (preset === 'pi-opus') {
-    return 'opus'
-  }
-
-  if (preset === 'pi-codex' || preset === 'codex-app') {
+  if (preset === 'codex-app') {
     return 'codex'
   }
 

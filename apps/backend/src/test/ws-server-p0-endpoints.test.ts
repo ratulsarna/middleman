@@ -462,6 +462,8 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
   })
 
   it('supports claude-agent-sdk token login SSE flow', async () => {
+    const originalCredentialsEnv = process.env.CLAUDE_CODE_CREDENTIALS_FILE
+    process.env.CLAUDE_CODE_CREDENTIALS_FILE = '/tmp/nonexistent-credentials-file.json'
     const config = await makeTempConfig({ managerId: 'manager' })
     const manager = new FakeSwarmManager(config, [createManagerDescriptor(config.paths.rootDir, 'manager')])
     const server = new SwarmWebSocketServer({
@@ -515,6 +517,11 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         access: 'sk-ant-oat01-test-token',
       })
     } finally {
+      if (originalCredentialsEnv === undefined) {
+        delete process.env.CLAUDE_CODE_CREDENTIALS_FILE
+      } else {
+        process.env.CLAUDE_CODE_CREDENTIALS_FILE = originalCredentialsEnv
+      }
       await server.stop()
     }
   })
@@ -700,7 +707,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
       expect(catalog.status).toBe(200)
 
       const providers = Array.isArray(catalog.json.providers) ? catalog.json.providers : []
-      expect(providers.length).toBeGreaterThanOrEqual(4)
+      expect(providers.length).toBeGreaterThanOrEqual(2)
 
       const providerIds = providers
         .map((entry) =>
@@ -710,7 +717,7 @@ describe('SwarmWebSocketServer P0 endpoints', () => {
         )
         .filter((value): value is string => typeof value === 'string')
       expect(providerIds).toEqual(
-        expect.arrayContaining(['openai-codex', 'anthropic', 'claude-agent-sdk', 'openai-codex-app-server']),
+        expect.arrayContaining(['claude-agent-sdk', 'openai-codex-app-server']),
       )
 
       const optionsResponse = await fetch(`http://${config.host}:${config.port}/api/models/manager-catalog`, {

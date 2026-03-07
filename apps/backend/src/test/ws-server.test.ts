@@ -165,9 +165,9 @@ async function makeTempConfig(port: number, allowNonManagerSubscriptions = false
     managerId: 'manager',
     managerDisplayName: 'Manager',
     defaultModel: {
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
-      thinkingLevel: 'medium',
+      provider: 'claude-agent-sdk',
+      modelId: 'claude-opus-4-6',
+      thinkingLevel: 'xhigh',
     },
     defaultCwd: root,
     cwdAllowlistRoots: [root, join(root, 'worktrees')],
@@ -1531,7 +1531,7 @@ describe('SwarmWebSocketServer', () => {
         type: 'create_manager',
         name: 'Review Manager',
         cwd: config.defaultCwd,
-        model: 'pi-opus',
+        model: 'claude-agent-sdk',
       }),
     )
 
@@ -1541,7 +1541,7 @@ describe('SwarmWebSocketServer', () => {
       expect(createdEvent.manager.role).toBe('manager')
       expect(createdEvent.manager.managerId).toBe(createdEvent.manager.agentId)
       expect(createdEvent.manager.model).toEqual({
-        provider: 'anthropic',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-opus-4-6',
         thinkingLevel: 'xhigh',
       })
@@ -1633,7 +1633,7 @@ describe('SwarmWebSocketServer', () => {
         type: 'create_manager',
         name: 'Explicit Manager',
         cwd: config.defaultCwd,
-        provider: 'anthropic',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-sonnet-4-5',
         thinkingLevel: 'high',
       }),
@@ -1643,7 +1643,7 @@ describe('SwarmWebSocketServer', () => {
     expect(createdEvent.type).toBe('manager_created')
     if (createdEvent.type === 'manager_created') {
       expect(createdEvent.manager.model).toEqual({
-        provider: 'anthropic',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-sonnet-4-5',
         thinkingLevel: 'high',
       })
@@ -1694,7 +1694,7 @@ describe('SwarmWebSocketServer', () => {
       (event) =>
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
-        event.message.includes('create_manager.model must be one of pi-codex|pi-opus|codex-app|claude-agent-sdk'),
+        event.message.includes('create_manager.model must be one of codex-app|claude-agent-sdk'),
     )
 
     expect(errorEvent.type).toBe('error')
@@ -1757,8 +1757,8 @@ describe('SwarmWebSocketServer', () => {
       {
         name: 'Mixed Manager',
         cwd: config.defaultCwd,
-        model: 'pi-opus',
-        provider: 'anthropic',
+        model: 'codex-app',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-opus-4-6',
       },
       'create_manager.model cannot be combined with create_manager.provider or create_manager.modelId',
@@ -1786,7 +1786,7 @@ describe('SwarmWebSocketServer', () => {
       {
         name: 'Preset With Thinking',
         cwd: config.defaultCwd,
-        model: 'pi-opus',
+        model: 'codex-app',
         thinkingLevel: 'low',
       },
       'create_manager.thinkingLevel is only supported with create_manager.provider and create_manager.modelId',
@@ -1838,7 +1838,7 @@ describe('SwarmWebSocketServer', () => {
       JSON.stringify({
         type: 'update_manager',
         managerId: 'manager',
-        model: 'pi-codex',
+        model: 'claude-agent-sdk',
         requestId: 'req-noop',
       }),
     )
@@ -1877,7 +1877,7 @@ describe('SwarmWebSocketServer', () => {
       JSON.stringify({
         type: 'update_manager',
         managerId: 'manager',
-        provider: 'anthropic',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-sonnet-4-5',
         requestId: 'req-explicit',
       }),
@@ -1891,7 +1891,7 @@ describe('SwarmWebSocketServer', () => {
     if (explicitUpdated.type === 'manager_updated') {
       expect(explicitUpdated.resetApplied).toBe(true)
       expect(explicitUpdated.manager.model).toEqual({
-        provider: 'anthropic',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-sonnet-4-5',
         thinkingLevel: 'xhigh',
       })
@@ -1941,7 +1941,7 @@ describe('SwarmWebSocketServer', () => {
       (event) =>
         event.type === 'error' &&
         event.code === 'INVALID_COMMAND' &&
-        event.message.includes('update_manager.model must be one of pi-codex|pi-opus|codex-app|claude-agent-sdk'),
+        event.message.includes('update_manager.model must be one of codex-app|claude-agent-sdk'),
     )
 
     expect(invalidModelError.type).toBe('error')
@@ -1950,8 +1950,8 @@ describe('SwarmWebSocketServer', () => {
       JSON.stringify({
         type: 'update_manager',
         managerId: 'manager',
-        model: 'pi-opus',
-        provider: 'anthropic',
+        model: 'codex-app',
+        provider: 'claude-agent-sdk',
         modelId: 'claude-opus-4-6',
       }),
     )
@@ -2007,8 +2007,8 @@ describe('SwarmWebSocketServer', () => {
 
     expect(unsupportedDescriptorError.type).toBe('error')
     expect(manager.getAgent('manager')?.model).toEqual({
-      provider: 'openai-codex',
-      modelId: 'gpt-5.3-codex',
+      provider: 'claude-agent-sdk',
+      modelId: 'claude-opus-4-6',
       thinkingLevel: 'xhigh',
     })
 

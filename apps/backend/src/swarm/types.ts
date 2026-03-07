@@ -6,7 +6,7 @@ export type AgentArchetypeId = string;
 
 export type { AgentStatus };
 
-export const SWARM_MODEL_PRESETS = ["pi-codex", "pi-opus", "codex-app", "claude-agent-sdk"] as const;
+export const SWARM_MODEL_PRESETS = ["codex-app", "claude-agent-sdk"] as const;
 
 export type SwarmModelPreset = (typeof SWARM_MODEL_PRESETS)[number];
 
@@ -42,7 +42,6 @@ export interface ProviderThinkingLevelMappings {
       effort?: ClaudeReasoningEffort;
     }
   >;
-  piRuntime: Record<ThinkingLevel, ThinkingLevel>;
 }
 
 export interface AgentContextUsage {

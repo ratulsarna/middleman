@@ -1,4 +1,6 @@
-# Migration and Backwards Compatibility Audit
+# Migration and Backwards Compatibility Audit (Historical)
+
+> **Historical document** (2026-02-25): The Pi runtime, `pi-codex`/`pi-opus` presets, and the legacy Pi auth migration path documented below have all been removed. Only `codex-app` and `claude-agent-sdk` runtimes remain. Findings referencing Pi compatibility code are no longer applicable.
 
 Date: 2026-02-25
 

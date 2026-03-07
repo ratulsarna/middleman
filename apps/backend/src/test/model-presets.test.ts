@@ -8,15 +8,6 @@ import {
 } from "../swarm/model-presets.js";
 
 describe("model-presets", () => {
-  it("maps legacy anthropic descriptor alias to pi-opus", () => {
-    expect(
-      inferSwarmModelPresetFromDescriptor({
-        provider: "anthropic",
-        modelId: "claude-opus-4.6"
-      })
-    ).toBe("pi-opus");
-  });
-
   it("maps legacy codex-app descriptor aliases to codex-app", () => {
     expect(
       inferSwarmModelPresetFromDescriptor({
@@ -36,17 +27,6 @@ describe("model-presets", () => {
   it("normalizes legacy aliases to canonical descriptors", () => {
     expect(
       normalizeSwarmModelDescriptor({
-        provider: "anthropic",
-        modelId: "claude-opus-4.6"
-      })
-    ).toEqual({
-      provider: "anthropic",
-      modelId: "claude-opus-4-6",
-      thinkingLevel: "xhigh"
-    });
-
-    expect(
-      normalizeSwarmModelDescriptor({
         provider: "openai-codex-app-server",
         modelId: "codex-app"
       })
@@ -60,36 +40,36 @@ describe("model-presets", () => {
   it("supports config-driven descriptor overrides for canonical presets", () => {
     const customPresetDefinitions: SwarmModelPresetDefinitions = {
       ...DEFAULT_SWARM_MODEL_PRESET_DEFINITIONS,
-      "pi-codex": {
+      "codex-app": {
         descriptor: {
-          provider: "openai-codex",
-          modelId: "gpt-5.4-codex",
+          provider: "openai-codex-app-server",
+          modelId: "custom-model",
           thinkingLevel: "high"
         }
       }
     };
 
     expect(
-      resolveModelDescriptorFromPreset("pi-codex", {
+      resolveModelDescriptorFromPreset("codex-app", {
         presetDefinitions: customPresetDefinitions
       })
     ).toEqual({
-      provider: "openai-codex",
-      modelId: "gpt-5.4-codex",
+      provider: "openai-codex-app-server",
+      modelId: "custom-model",
       thinkingLevel: "high"
     });
 
     expect(
       inferSwarmModelPresetFromDescriptor(
         {
-          provider: "openai-codex",
-          modelId: "gpt-5.4-codex"
+          provider: "openai-codex-app-server",
+          modelId: "custom-model"
         },
         {
           presetDefinitions: customPresetDefinitions
         }
       )
-    ).toBe("pi-codex");
+    ).toBe("codex-app");
   });
 
   it("handles malformed descriptor fields without throwing raw type errors", () => {

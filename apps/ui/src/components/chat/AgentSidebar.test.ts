@@ -162,17 +162,14 @@ describe('AgentSidebar', () => {
   it('shows runtime icons and compact model labels from model presets', () => {
     renderSidebar({
       agents: [
-        manager('manager-pi', { provider: 'openai-codex', modelId: 'gpt-5.3-codex' }),
-        worker('worker-opus', 'manager-pi', { provider: 'anthropic', modelId: 'claude-opus-4-6' }),
-        worker('worker-codex', 'manager-pi', { provider: 'openai-codex-app-server', modelId: 'default' }),
+        manager('manager-claude', { provider: 'claude-agent-sdk', modelId: 'claude-opus-4-6' }),
+        worker('worker-codex', 'manager-claude', { provider: 'openai-codex-app-server', modelId: 'default' }),
       ],
     })
 
-    // manager-pi (pi-codex): pi-logo + codex-logo
-    // worker-opus (pi-opus): pi-logo + claude-logo
+    // manager-claude (claude-agent-sdk): claude-logo
     // worker-codex (codex-app): codex-app-logo + codex-logo
-    expect(sidebar().querySelectorAll('img[src="/pi-logo.svg"]').length).toBe(2)
-    expect(sidebar().querySelectorAll('img[src="/agents/codex-logo.svg"]').length).toBe(2)
+    expect(sidebar().querySelectorAll('img[src="/agents/codex-logo.svg"]').length).toBe(1)
     expect(sidebar().querySelector('img[src="/agents/claude-logo.svg"]')).toBeTruthy()
     expect(sidebar().querySelector('img[src="/agents/codex-app-logo.svg"]')).toBeTruthy()
   })
