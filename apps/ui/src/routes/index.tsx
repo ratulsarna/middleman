@@ -36,6 +36,8 @@ import type {
   ConversationAttachment,
 } from '@nexus/protocol'
 import type { UpdateManagerInput, UpdateManagerResult } from '@/lib/ws-client'
+import { useModelCatalog } from '@/hooks/use-model-catalog'
+import { useComposerModelActions } from '@/hooks/use-composer-model-actions'
 
 export const Route = createFileRoute('/')({
   component: IndexPage,
@@ -214,6 +216,16 @@ export function IndexPage() {
   } = useFileDrop({
     activeView,
     messageInputRef,
+  })
+
+  const { catalog: composerCatalog } = useModelCatalog(wsUrl)
+  const {
+    handleModelChange: handleComposerModelChange,
+    handleThinkingLevelChange: handleComposerThinkingLevelChange,
+  } = useComposerModelActions({
+    activeAgent,
+    catalog: composerCatalog,
+    clientRef,
   })
 
   useEffect(() => {
@@ -440,6 +452,10 @@ export function IndexPage() {
                   allowWhileLoading
                   agentLabel={activeAgentLabel}
                   wsUrl={wsUrl}
+                  activeAgent={activeAgent}
+                  catalog={composerCatalog}
+                  onModelChange={handleComposerModelChange}
+                  onThinkingLevelChange={handleComposerThinkingLevelChange}
                 />
               </>
             )}

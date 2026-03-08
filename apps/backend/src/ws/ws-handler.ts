@@ -158,7 +158,8 @@ export class WsHandler {
       subscribedAgentId,
       swarmManager: this.swarmManager,
       resolveManagerContextAgentId: (agentId) => this.resolveManagerContextAgentId(agentId),
-      send: (targetSocket, event) => this.send(targetSocket, event)
+      send: (targetSocket, event) => this.send(targetSocket, event),
+      broadcastToSubscribed: (event) => this.broadcastToSubscribed(event),
     });
     if (agentHandled) {
       return;

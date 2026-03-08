@@ -240,7 +240,9 @@ describe('IndexPage create manager model selection', () => {
     expect(queryByText(document.body, 'Loading model catalog...')).not.toBeNull()
     await vi.advanceTimersByTimeAsync(0)
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    // The catalog is fetched once by useModelCatalog (composer) on mount, and
+    // once by useManagerActions when the create-manager dialog opens.
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     await vi.waitFor(() => {
       expect(getByRole(document.body, 'combobox', { name: 'Provider' }).textContent).toContain('OpenAI Codex')
     })

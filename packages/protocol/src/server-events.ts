@@ -184,6 +184,12 @@ export interface AgentsSnapshotEvent {
   agents: AgentDescriptor[]
 }
 
+export interface AgentModelUpdatedEvent {
+  type: 'agent_model_updated'
+  agent: AgentDescriptor
+  requestId?: string
+}
+
 export type ServerEvent =
   | { type: 'ready'; serverTime: string; subscribedAgentId: string }
   | { type: 'conversation_reset'; agentId: string; timestamp: string; reason: 'user_new_command' | 'api_reset' }
@@ -198,6 +204,7 @@ export type ServerEvent =
   | ManagerCreatedEvent
   | ManagerDeletedEvent
   | ManagerUpdatedEvent
+  | AgentModelUpdatedEvent
   | StopAllAgentsResultEvent
   | DirectoriesListedEvent
   | DirectoryValidatedEvent

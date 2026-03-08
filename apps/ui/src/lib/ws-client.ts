@@ -53,11 +53,22 @@ export interface UpdateManagerResult {
   resetApplied: boolean
 }
 
+export interface UpdateAgentModelInput {
+  agentId: string
+  modelId?: string
+  thinkingLevel?: ThinkingLevel
+}
+
+export interface UpdateAgentModelResult {
+  agent: AgentDescriptor
+}
+
 type Listener = (state: ManagerWsState) => void
 
 type WsRequestResultMap = {
   create_manager: AgentDescriptor
   update_manager: UpdateManagerResult
+  update_agent_model: UpdateAgentModelResult
   delete_manager: { managerId: string }
   stop_all_agents: { managerId: string; stoppedWorkerIds: string[]; managerStopped: boolean }
   list_directories: DirectoriesListedResult
@@ -69,6 +80,7 @@ type WsRequestType = Extract<keyof WsRequestResultMap, string>
 const WS_REQUEST_TYPES: WsRequestType[] = [
   'create_manager',
   'update_manager',
+  'update_agent_model',
   'delete_manager',
   'stop_all_agents',
   'list_directories',
@@ -79,6 +91,7 @@ const WS_REQUEST_TYPES: WsRequestType[] = [
 const WS_REQUEST_ERROR_HINTS: Array<{ requestType: WsRequestType; codeFragment: string }> = [
   { requestType: 'create_manager', codeFragment: 'create_manager' },
   { requestType: 'update_manager', codeFragment: 'update_manager' },
+  { requestType: 'update_agent_model', codeFragment: 'update_agent_model' },
   { requestType: 'delete_manager', codeFragment: 'delete_manager' },
   { requestType: 'stop_all_agents', codeFragment: 'stop_all_agents' },
   { requestType: 'list_directories', codeFragment: 'list_directories' },
@@ -366,6 +379,32 @@ export class ManagerWsClient {
     }))
   }
 
+  async updateAgentModel(input: UpdateAgentModelInput): Promise<UpdateAgentModelResult> {
+    const agentId = input.agentId.trim()
+    const modelId = input.modelId?.trim() || undefined
+    const thinkingLevel = input.thinkingLevel
+
+    if (!agentId) {
+      throw new Error('Agent id is required.')
+    }
+
+    if (modelId === undefined && thinkingLevel === undefined) {
+      throw new Error('At least one of modelId or thinkingLevel must be provided.')
+    }
+
+    if (!this.socket || this.socket.readyState !== WebSocket.OPEN) {
+      throw new Error('WebSocket is disconnected. Reconnecting...')
+    }
+
+    return this.enqueueRequest('update_agent_model', (requestId) => ({
+      type: 'update_agent_model',
+      agentId,
+      modelId,
+      thinkingLevel,
+      requestId,
+    }))
+  }
+
   async deleteManager(managerId: string): Promise<{ managerId: string }> {
     const trimmed = managerId.trim()
     if (!trimmed) {
@@ -588,6 +627,14 @@ export class ManagerWsClient {
         break
       }
 
+      case 'agent_model_updated': {
+        this.applyAgentModelUpdated(event.agent)
+        this.requestTracker.resolve('update_agent_model', event.requestId, {
+          agent: event.agent,
+        })
+        break
+      }
+
       case 'manager_deleted': {
         this.applyManagerDeleted(event.managerId)
         this.requestTracker.resolve('delete_manager', event.requestId, {
@@ -722,6 +769,16 @@ export class ManagerWsClient {
           agent.agentId === manager.agentId ? manager : agent,
         )
       : [...this.state.agents, manager]
+    this.applyAgentsSnapshot(nextAgents)
+  }
+
+  private applyAgentModelUpdated(agent: AgentDescriptor): void {
+    const agentExists = this.state.agents.some((a) => a.agentId === agent.agentId)
+    const nextAgents = agentExists
+      ? this.state.agents.map((a) =>
+          a.agentId === agent.agentId ? agent : a,
+        )
+      : [...this.state.agents, agent]
     this.applyAgentsSnapshot(nextAgents)
   }
 

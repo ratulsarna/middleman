@@ -1146,4 +1146,160 @@ describe('ManagerWsClient', () => {
 
     client.destroy()
   })
+
+  it('sends update_agent_model and resolves on agent_model_updated event', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'claude-agent-sdk',
+            modelId: 'claude-opus-4-6',
+            thinkingLevel: 'xhigh',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+        {
+          agentId: 'worker',
+          managerId: 'manager',
+          displayName: 'worker',
+          role: 'worker',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'claude-agent-sdk',
+            modelId: 'claude-opus-4-6',
+            thinkingLevel: 'xhigh',
+          },
+          sessionFile: '/tmp/worker.jsonl',
+        },
+      ],
+    })
+
+    const updatePromise = client.updateAgentModel({
+      agentId: 'worker',
+      thinkingLevel: 'medium',
+    })
+
+    const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+    expect(updatePayload).toMatchObject({
+      type: 'update_agent_model',
+      agentId: 'worker',
+      thinkingLevel: 'medium',
+    })
+    expect(typeof updatePayload.requestId).toBe('string')
+
+    const updatedWorker = {
+      agentId: 'worker',
+      managerId: 'manager',
+      displayName: 'worker',
+      role: 'worker' as const,
+      status: 'idle' as const,
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:10.000Z',
+      cwd: '/tmp',
+      model: {
+        provider: 'claude-agent-sdk',
+        modelId: 'claude-opus-4-6',
+        thinkingLevel: 'medium' as const,
+      },
+      sessionFile: '/tmp/worker.jsonl',
+    }
+
+    emitServerEvent(socket, {
+      type: 'agent_model_updated',
+      requestId: updatePayload.requestId,
+      agent: updatedWorker,
+    })
+
+    const result = await updatePromise
+    expect(result.agent.model.thinkingLevel).toBe('medium')
+    expect(result.agent.agentId).toBe('worker')
+
+    // Verify the agents array in state was updated
+    const workerInState = client.getState().agents.find((a) => a.agentId === 'worker')
+    expect(workerInState?.model.thinkingLevel).toBe('medium')
+
+    client.destroy()
+  })
+
+  it('updateAgentModel rejects on error event', async () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: '2026-01-01T00:00:00.000Z',
+          updatedAt: '2026-01-01T00:00:00.000Z',
+          cwd: '/tmp',
+          model: {
+            provider: 'claude-agent-sdk',
+            modelId: 'claude-opus-4-6',
+            thinkingLevel: 'xhigh',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    const updatePromise = client.updateAgentModel({
+      agentId: 'nonexistent',
+      thinkingLevel: 'low',
+    })
+
+    const updatePayload = JSON.parse(socket.sentPayloads.at(-1) ?? '{}')
+
+    emitServerEvent(socket, {
+      type: 'error',
+      code: 'UPDATE_AGENT_MODEL_FAILED',
+      message: 'Unknown agent: nonexistent',
+      requestId: updatePayload.requestId,
+    })
+
+    await expect(updatePromise).rejects.toThrow('UPDATE_AGENT_MODEL_FAILED')
+
+    client.destroy()
+  })
 })

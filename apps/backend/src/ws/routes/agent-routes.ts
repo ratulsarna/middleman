@@ -30,10 +30,11 @@ export interface AgentCommandRouteContext {
   swarmManager: SwarmManager;
   resolveManagerContextAgentId: (subscribedAgentId: string) => string | undefined;
   send: (socket: WebSocket, event: ServerEvent) => void;
+  broadcastToSubscribed: (event: ServerEvent) => void;
 }
 
 export async function handleAgentCommand(context: AgentCommandRouteContext): Promise<boolean> {
-  const { command, socket, subscribedAgentId, swarmManager, resolveManagerContextAgentId, send } = context;
+  const { command, socket, subscribedAgentId, swarmManager, resolveManagerContextAgentId, send, broadcastToSubscribed } = context;
 
   if (command.type === "kill_agent") {
     const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
@@ -87,6 +88,42 @@ export async function handleAgentCommand(context: AgentCommandRouteContext): Pro
       send(socket, {
         type: "error",
         code: "STOP_ALL_AGENTS_FAILED",
+        message: error instanceof Error ? error.message : String(error),
+        requestId: command.requestId
+      });
+    }
+
+    return true;
+  }
+
+  if (command.type === "update_agent_model") {
+    const managerContextId = resolveManagerContextAgentId(subscribedAgentId);
+    if (!managerContextId) {
+      send(socket, {
+        type: "error",
+        code: "UNKNOWN_AGENT",
+        message: `Agent ${subscribedAgentId} does not exist.`,
+        requestId: command.requestId
+      });
+      return true;
+    }
+
+    try {
+      const updated = await swarmManager.updateAgentModel(managerContextId, {
+        agentId: command.agentId,
+        modelId: command.modelId,
+        thinkingLevel: command.thinkingLevel,
+      });
+
+      broadcastToSubscribed({
+        type: "agent_model_updated",
+        agent: updated.agent,
+        requestId: command.requestId,
+      });
+    } catch (error) {
+      send(socket, {
+        type: "error",
+        code: "UPDATE_AGENT_MODEL_FAILED",
         message: error instanceof Error ? error.message : String(error),
         requestId: command.requestId
       });

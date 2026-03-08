@@ -3060,6 +3060,155 @@ describe('SwarmManager', () => {
     expect(listed.roots).toEqual([])
   })
 
+  // --- updateAgentModel tests ---
+
+  it('updateAgentModel updates manager thinking level without reset', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const initialDescriptor = manager.getAgent('manager')
+    expect(initialDescriptor?.model.thinkingLevel).toBe('xhigh')
+
+    const result = await manager.updateAgentModel('manager', {
+      agentId: 'manager',
+      thinkingLevel: 'low',
+    })
+
+    expect(result.agent.model.thinkingLevel).toBe('low')
+    expect(result.agent.model.provider).toBe('claude-agent-sdk')
+    expect(result.agent.model.modelId).toBe('claude-opus-4-6')
+    // Same-provider change should not create a second runtime (no reset).
+    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(1)
+  })
+
+  it('updateAgentModel updates manager modelId without reset when same provider', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const result = await manager.updateAgentModel('manager', {
+      agentId: 'manager',
+      modelId: 'claude-sonnet-4-5',
+    })
+
+    expect(result.agent.model.modelId).toBe('claude-sonnet-4-5')
+    expect(result.agent.model.provider).toBe('claude-agent-sdk')
+    expect(manager.createdRuntimeIds.filter((id) => id === 'manager')).toHaveLength(1)
+  })
+
+  it('updateAgentModel updates worker thinking level in place', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker' })
+    expect(worker.model.thinkingLevel).toBe('xhigh')
+
+    const result = await manager.updateAgentModel('manager', {
+      agentId: worker.agentId,
+      thinkingLevel: 'medium',
+    })
+
+    expect(result.agent.model.thinkingLevel).toBe('medium')
+    expect(result.agent.model.provider).toBe(worker.model.provider)
+    expect(result.agent.model.modelId).toBe(worker.model.modelId)
+    // Worker runtimes should not be recreated.
+    expect(manager.createdRuntimeIds.filter((id) => id === worker.agentId)).toHaveLength(1)
+  })
+
+  it('updateAgentModel updates worker modelId in place', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker' })
+
+    const result = await manager.updateAgentModel('manager', {
+      agentId: worker.agentId,
+      modelId: 'claude-sonnet-4-5',
+      thinkingLevel: 'low',
+    })
+
+    expect(result.agent.model.modelId).toBe('claude-sonnet-4-5')
+    expect(result.agent.model.thinkingLevel).toBe('low')
+    expect(result.agent.model.provider).toBe(worker.model.provider)
+  })
+
+  it('updateAgentModel rejects when agent does not exist', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateAgentModel('manager', {
+        agentId: 'nonexistent',
+        thinkingLevel: 'low',
+      }),
+    ).rejects.toThrow('Unknown agent: nonexistent')
+  })
+
+  it('updateAgentModel rejects when worker is terminated', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker' })
+    await manager.killAgent('manager', worker.agentId)
+
+    await expect(
+      manager.updateAgentModel('manager', {
+        agentId: worker.agentId,
+        thinkingLevel: 'low',
+      }),
+    ).rejects.toThrow(`Agent is not running: ${worker.agentId}`)
+  })
+
+  it('updateAgentModel returns current descriptor when no effective change on worker', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker' })
+    const beforeUpdate = manager.getAgent(worker.agentId)
+
+    const result = await manager.updateAgentModel('manager', {
+      agentId: worker.agentId,
+      modelId: worker.model.modelId,
+      thinkingLevel: worker.model.thinkingLevel,
+    })
+
+    expect(result.agent.model).toEqual(worker.model)
+    expect(result.agent.updatedAt).toBe(beforeUpdate?.updatedAt)
+  })
+
+  it('updateAgentModel rejects when no fields provided', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    await expect(
+      manager.updateAgentModel('manager', {
+        agentId: 'manager',
+      }),
+    ).rejects.toThrow('At least one of modelId or thinkingLevel must be provided')
+  })
+
+  it('updateAgentModel rejects when called by a non-manager', async () => {
+    const config = await makeTempConfig()
+    const manager = new TestSwarmManager(config)
+    await bootWithDefaultManager(manager, config)
+
+    const worker = await manager.spawnAgent('manager', { agentId: 'Worker' })
+
+    await expect(
+      manager.updateAgentModel(worker.agentId, {
+        agentId: worker.agentId,
+        thinkingLevel: 'low',
+      }),
+    ).rejects.toThrow('Only manager can update agent model')
+  })
+
   describe('cross-manager messaging', () => {
     it('delivers a message from one manager to another', async () => {
       const config = await makeTempConfig()

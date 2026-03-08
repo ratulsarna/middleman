@@ -1006,7 +1006,7 @@ export function SettingsGeneral({ wsUrl, managers, onUpdateManager }: SettingsGe
 
       <SettingsSection
         label="Manager Runtime"
-        description="Configure explicit model descriptor settings for existing managers"
+        description="Configure explicit model descriptor settings for existing managers. Model and thinking level can also be changed from the chat input toolbar."
       >
         {managerOptions.length === 0 ? (
           <SettingsWithCTA

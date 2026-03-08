@@ -40,4 +40,11 @@ export type ClientCommand =
   | { type: 'list_directories'; path?: string; requestId?: string }
   | { type: 'validate_directory'; path: string; requestId?: string }
   | { type: 'pick_directory'; defaultPath?: string; requestId?: string }
+  | {
+      type: 'update_agent_model'
+      agentId: string
+      modelId?: string
+      thinkingLevel?: ThinkingLevel
+      requestId?: string
+    }
   | { type: 'ping' }

@@ -870,6 +870,75 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     };
   }
 
+  async updateAgentModel(
+    callerAgentId: string,
+    input: { agentId: string; modelId?: string; thinkingLevel?: ThinkingLevel }
+  ): Promise<{ agent: AgentDescriptor }> {
+    this.assertManager(callerAgentId, "update agent model");
+
+    const target = this.descriptors.get(input.agentId);
+    if (!target) {
+      throw new Error(`Unknown agent: ${input.agentId}`);
+    }
+
+    if (isNonRunningAgentStatus(target.status)) {
+      throw new Error(`Agent is not running: ${input.agentId}`);
+    }
+
+    const requestedModelId = parseOptionalNonEmptyString(input.modelId, "update_agent_model.modelId");
+    const requestedThinkingLevel = parseThinkingLevel(input.thinkingLevel, "update_agent_model.thinkingLevel");
+
+    if (requestedModelId === undefined && requestedThinkingLevel === undefined) {
+      throw new Error("At least one of modelId or thinkingLevel must be provided.");
+    }
+
+    // For managers, delegate to the existing updateManager flow (preserves current provider).
+    if (target.role === "manager") {
+      const updated = await this.updateManager(callerAgentId, {
+        managerId: target.agentId,
+        provider: target.model.provider,
+        modelId: requestedModelId ?? target.model.modelId,
+        thinkingLevel: requestedThinkingLevel ?? target.model.thinkingLevel,
+      });
+      return { agent: updated.manager };
+    }
+
+    // Worker path: mutate descriptor.model in place.
+    const nextModelId = requestedModelId ?? target.model.modelId;
+    const nextThinkingLevel = requestedThinkingLevel ?? target.model.thinkingLevel;
+
+    const modelIdChanged = target.model.modelId !== nextModelId;
+    const thinkingLevelChanged = target.model.thinkingLevel !== nextThinkingLevel;
+
+    if (!modelIdChanged && !thinkingLevelChanged) {
+      this.logDebug("agent:update_model:no_effective_change", {
+        callerAgentId,
+        agentId: target.agentId,
+      });
+      return { agent: cloneDescriptor(target) };
+    }
+
+    target.model = {
+      ...target.model,
+      modelId: nextModelId,
+      thinkingLevel: nextThinkingLevel,
+    };
+    target.updatedAt = this.now();
+    this.descriptors.set(target.agentId, target);
+    await this.saveStore();
+
+    this.logDebug("agent:update_model:applied", {
+      callerAgentId,
+      agentId: target.agentId,
+      modelIdChanged,
+      thinkingLevelChanged,
+    });
+
+    this.emitAgentsSnapshot();
+
+    return { agent: cloneDescriptor(target) };
+  }
+
   getAgent(agentId: string): AgentDescriptor | undefined {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) {

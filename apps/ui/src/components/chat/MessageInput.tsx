@@ -22,7 +22,9 @@ import {
 import { resolveApiEndpoint } from '@/lib/api-endpoint'
 import { transcribeVoice } from '@/lib/voice-transcription-client'
 import { cn } from '@/lib/utils'
-import type { ConversationAttachment } from '@nexus/protocol'
+import type { AgentDescriptor, ConversationAttachment, ThinkingLevel } from '@nexus/protocol'
+import type { CreateManagerCatalog } from '@/lib/manager-model-catalog-api'
+import { ComposerModelSelector } from '@/components/chat/ComposerModelSelector'
 
 const TEXTAREA_MAX_HEIGHT = 186
 const ACTIVE_WAVEFORM_BAR_COUNT = 16
@@ -35,6 +37,10 @@ interface MessageInputProps {
   agentLabel?: string
   allowWhileLoading?: boolean
   wsUrl?: string
+  activeAgent?: AgentDescriptor | null
+  catalog?: CreateManagerCatalog | null
+  onModelChange?: (modelId: string) => void
+  onThinkingLevelChange?: (thinkingLevel: ThinkingLevel) => void
 }
 
 export interface MessageInputHandle {
@@ -108,6 +114,10 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
     agentLabel = 'agent',
     allowWhileLoading = false,
     wsUrl,
+    activeAgent,
+    catalog,
+    onModelChange,
+    onThinkingLevelChange,
   },
   ref,
 ) {
@@ -469,6 +479,16 @@ export const MessageInput = forwardRef<MessageInputHandle, MessageInputProps>(fu
                   <Mic className="size-3.5" />
                 )}
               </Button>
+
+              {activeAgent && catalog && onModelChange && onThinkingLevelChange ? (
+                <ComposerModelSelector
+                  activeAgent={activeAgent}
+                  catalog={catalog}
+                  disabled={disabled}
+                  onModelChange={onModelChange}
+                  onThinkingLevelChange={onThinkingLevelChange}
+                />
+              ) : null}
             </div>
 
             <Button
