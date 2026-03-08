@@ -734,7 +734,10 @@ export class ManagerWsClient {
           agent.agentId,
           {
             status,
-            pendingCount: previous && previous.status === status ? previous.pendingCount : 0,
+            pendingCount:
+              previous && previous.status === status && status === 'streaming'
+                ? previous.pendingCount
+                : 0,
             contextUsage: agent.contextUsage,
           },
         ]

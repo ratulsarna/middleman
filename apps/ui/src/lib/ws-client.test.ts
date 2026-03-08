@@ -792,6 +792,79 @@ describe('ManagerWsClient', () => {
     client.destroy()
   })
 
+  it('resets stale idle pending counts when an agents_snapshot arrives', () => {
+    const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
+
+    client.start()
+    vi.advanceTimersByTime(60)
+
+    const socket = FakeWebSocket.instances[0]
+    socket.emit('open')
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'manager',
+    })
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'xhigh',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'manager',
+      status: 'idle',
+      pendingCount: 2,
+    })
+
+    expect(client.getState().statuses.manager?.pendingCount).toBe(2)
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        {
+          agentId: 'manager',
+          managerId: 'manager',
+          displayName: 'Manager',
+          role: 'manager',
+          status: 'idle',
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          cwd: '/tmp',
+          model: {
+            provider: 'openai-codex',
+            modelId: 'gpt-5.3-codex',
+            thinkingLevel: 'xhigh',
+          },
+          sessionFile: '/tmp/manager.jsonl',
+        },
+      ],
+    })
+
+    expect(client.getState().statuses.manager?.pendingCount).toBe(0)
+
+    client.destroy()
+  })
+
   it('sends create_manager and resolves with manager_created event', async () => {
     const client = new ManagerWsClient('ws://127.0.0.1:8787', 'manager')
 
