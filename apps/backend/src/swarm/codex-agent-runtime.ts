@@ -1078,7 +1078,9 @@ export class CodexAgentRuntime implements SwarmAgentRuntime {
     // (e.g. restartManager called while reportRuntimeError was in-flight),
     // setting this.status to "terminated" and installing a fresh runtime.
     // Proceeding would emit a stale callback that deletes the new runtime.
-    if (this.status === "terminated") {
+    // Cast needed: TS narrows out "terminated" from the early return above,
+    // but the status can be mutated concurrently during the await.
+    if ((this.status as string) === "terminated") {
       return;
     }
 
