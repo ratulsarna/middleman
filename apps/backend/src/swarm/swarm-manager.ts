@@ -2317,6 +2317,13 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
     const descriptor = this.descriptors.get(agentId);
     if (!descriptor) return;
 
+    // During restart, stale runtime callbacks (e.g. terminated from a duplicate
+    // being cleaned up) would undo the restart's state transitions and evict
+    // the replacement runtime. Skip entirely — restartManager manages its own state.
+    if (this.restartingManagerIds.has(agentId)) {
+      return;
+    }
+
     const normalizedContextUsage = normalizeContextUsage(contextUsage);
     let shouldPersist = false;
 

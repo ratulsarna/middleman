@@ -3638,6 +3638,9 @@ describe('SwarmManager', () => {
       const manager = new TestSwarmManager(config)
       await bootWithDefaultManager(manager, config)
 
+      const previousRuntime = manager.runtimeByAgentId.get('manager')
+      const createdBefore = manager.createdRuntimeIds.filter((id) => id === 'manager').length
+
       // Terminate the manager descriptor manually (simulating a crash)
       const descriptors = (manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors
       const runtimes = (manager as unknown as { runtimes: Map<string, unknown> }).runtimes
@@ -3647,7 +3650,9 @@ describe('SwarmManager', () => {
 
       const restarted = await manager.restartManager('manager', 'manager')
       expect(restarted.status).toBe('idle')
-      expect(manager.runtimeByAgentId.has('manager')).toBe(true)
+      expect(manager.runtimeByAgentId.get('manager')).toBeDefined()
+      expect(manager.runtimeByAgentId.get('manager')).not.toBe(previousRuntime)
+      expect(manager.createdRuntimeIds.filter((id) => id === 'manager').length).toBe(createdBefore + 1)
     })
 
     it('preserves conversation history on restart', async () => {
@@ -3675,13 +3680,16 @@ describe('SwarmManager', () => {
       expect(manager.getConversationHistory('manager').length).toBe(1)
     })
 
-    it('preserves session file on restart', async () => {
+    it('preserves session file on restart (does not delete it)', async () => {
       const config = await makeTempConfig()
       const manager = new TestSwarmManager(config)
       await bootWithDefaultManager(manager, config)
 
       const descriptor = manager.listAgents().find((a) => a.agentId === 'manager')!
-      const sessionExistsBefore = existsSync(descriptor.sessionFile)
+      // Seed a session file to verify restart does not delete it
+      const sentinel = '{"sentinel":true}\n'
+      await writeFile(descriptor.sessionFile, sentinel, 'utf8')
+      expect(existsSync(descriptor.sessionFile)).toBe(true)
 
       const descriptors = (manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors
       const runtimes = (manager as unknown as { runtimes: Map<string, unknown> }).runtimes
@@ -3689,7 +3697,8 @@ describe('SwarmManager', () => {
       runtimes.delete('manager')
 
       await manager.restartManager('manager', 'manager')
-      expect(existsSync(descriptor.sessionFile)).toBe(sessionExistsBefore)
+      // Session file must still exist (not deleted like resetManagerSession would)
+      expect(existsSync(descriptor.sessionFile)).toBe(true)
     })
 
     it('cleans up stale runtime before creating new one', async () => {
@@ -3741,6 +3750,9 @@ describe('SwarmManager', () => {
       const manager = new TestSwarmManager(config)
       await bootWithDefaultManager(manager, config)
 
+      const previousRuntime = manager.runtimeByAgentId.get('manager')
+      const createdBefore = manager.createdRuntimeIds.filter((id) => id === 'manager').length
+
       const descriptors = (manager as unknown as { descriptors: Map<string, AgentDescriptor> }).descriptors
       const runtimes = (manager as unknown as { runtimes: Map<string, unknown> }).runtimes
       descriptors.get('manager')!.status = 'stopped'
@@ -3748,7 +3760,9 @@ describe('SwarmManager', () => {
 
       const restarted = await manager.restartManager('manager', 'manager')
       expect(restarted.status).toBe('idle')
-      expect(manager.runtimeByAgentId.has('manager')).toBe(true)
+      expect(manager.runtimeByAgentId.get('manager')).toBeDefined()
+      expect(manager.runtimeByAgentId.get('manager')).not.toBe(previousRuntime)
+      expect(manager.createdRuntimeIds.filter((id) => id === 'manager').length).toBe(createdBefore + 1)
     })
   })
 })
