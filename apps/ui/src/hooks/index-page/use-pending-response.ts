@@ -54,6 +54,12 @@ export function usePendingResponse({
       return
     }
 
+    // Clear when agent crashes or stops — no response will arrive
+    if (activeAgentStatus === 'terminated' || activeAgentStatus === 'stopped' || activeAgentStatus === 'error') {
+      setPendingResponseStart(null)
+      return
+    }
+
     if (messages.length < pendingResponseStart.messageCount) {
       setPendingResponseStart(null)
       return
