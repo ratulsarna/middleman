@@ -649,6 +649,60 @@ describe('IndexPage create manager model selection', () => {
       agentId: 'release-worker',
     })
   })
+
+  it('tracks interrupt-in-flight state per agent so another busy thread can still be stopped', async () => {
+    const socket = await renderPage()
+
+    emitServerEvent(socket, {
+      type: 'agents_snapshot',
+      agents: [
+        buildManager('manager', '/tmp/manager'),
+        buildWorker('release-worker', 'manager', '/tmp/manager'),
+      ],
+    })
+
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'manager',
+      status: 'streaming',
+      pendingCount: 1,
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    click(getByRole(container, 'button', { name: 'Stop agent' }))
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '{}')).toMatchObject({
+      type: 'interrupt_agent',
+      agentId: 'manager',
+    })
+
+    const workerRow = queryByText(sidebar(), 'release-worker')
+    expect(workerRow).not.toBeNull()
+    click(workerRow!.closest('button') as HTMLButtonElement)
+
+    emitServerEvent(socket, {
+      type: 'ready',
+      serverTime: new Date().toISOString(),
+      subscribedAgentId: 'release-worker',
+    })
+    emitServerEvent(socket, {
+      type: 'agent_status',
+      agentId: 'release-worker',
+      status: 'streaming',
+      pendingCount: 1,
+    })
+
+    await vi.advanceTimersByTimeAsync(0)
+
+    const workerStopButton = getByRole(container, 'button', { name: 'Stop agent' }) as HTMLButtonElement
+    expect(workerStopButton.disabled).toBe(false)
+    click(workerStopButton)
+
+    expect(JSON.parse(socket.sentPayloads.at(-1) ?? '{}')).toMatchObject({
+      type: 'interrupt_agent',
+      agentId: 'release-worker',
+    })
+  })
 })
 
 function createDefaultCatalogResponse(): ManagerModelCatalogResponse {

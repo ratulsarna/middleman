@@ -78,7 +78,7 @@ export function IndexPage() {
   const [isArtifactsPanelOpen, setIsArtifactsPanelOpen] = useState(false)
   const [channelView, setChannelView] = useState<ChannelView>('web')
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false)
-  const [isInterruptingActiveAgent, setIsInterruptingActiveAgent] = useState(false)
+  const [interruptingAgentIds, setInterruptingAgentIds] = useState<Set<string>>(() => new Set())
 
   const activeAgentId = useMemo(() => {
     return state.targetAgentId ?? state.subscribedAgentId ?? chooseFallbackAgentId(state.agents)
@@ -145,6 +145,7 @@ export function IndexPage() {
   const showInterruptActiveAgent =
     Boolean(activeAgentId) &&
     (activeAgentStatus === 'streaming' || isAwaitingResponseStart || activeAgentPendingCount > 0)
+  const isInterruptingActiveAgent = activeAgentId ? interruptingAgentIds.has(activeAgentId) : false
   const canStopAllAgents =
     isActiveManager &&
     (activeAgentStatus === 'idle' || activeAgentStatus === 'streaming')
@@ -240,10 +241,20 @@ export function IndexPage() {
   }, [activeAgentId])
 
   useEffect(() => {
-    if (!showInterruptActiveAgent) {
-      setIsInterruptingActiveAgent(false)
+    if (!activeAgentId || showInterruptActiveAgent) {
+      return
     }
-  }, [showInterruptActiveAgent])
+
+    setInterruptingAgentIds((previous) => {
+      if (!previous.has(activeAgentId)) {
+        return previous
+      }
+
+      const next = new Set(previous)
+      next.delete(activeAgentId)
+      return next
+    })
+  }, [activeAgentId, showInterruptActiveAgent])
 
   useEffect(() => {
     if (routeState.view !== 'chat') {
@@ -317,15 +328,21 @@ export function IndexPage() {
 
   const handleInterruptActiveAgent = useCallback(async () => {
     const client = clientRef.current
-    if (!client || !activeAgentId || isInterruptingActiveAgent) {
+    if (!client || !activeAgentId || interruptingAgentIds.has(activeAgentId)) {
       return
     }
 
-    setIsInterruptingActiveAgent(true)
+    const targetAgentId = activeAgentId
+
+    setInterruptingAgentIds((previous) => {
+      const next = new Set(previous)
+      next.add(targetAgentId)
+      return next
+    })
 
     try {
-      await client.interruptAgent(activeAgentId)
-      clearPendingResponseForAgent(activeAgentId)
+      await client.interruptAgent(targetAgentId)
+      clearPendingResponseForAgent(targetAgentId)
       setState((previous) => ({
         ...previous,
         lastError: null,
@@ -337,9 +354,17 @@ export function IndexPage() {
         lastError: `Failed to stop agent: ${message}`,
       }))
     } finally {
-      setIsInterruptingActiveAgent(false)
+      setInterruptingAgentIds((previous) => {
+        if (!previous.has(targetAgentId)) {
+          return previous
+        }
+
+        const next = new Set(previous)
+        next.delete(targetAgentId)
+        return next
+      })
     }
-  }, [activeAgentId, clearPendingResponseForAgent, clientRef, isInterruptingActiveAgent, setState])
+  }, [activeAgentId, clearPendingResponseForAgent, clientRef, interruptingAgentIds, setState])
 
   const handleSelectAgent = (agentId: string) => {
     navigateToRoute({ view: 'chat', agentId })
