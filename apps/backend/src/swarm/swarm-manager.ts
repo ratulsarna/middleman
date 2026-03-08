@@ -1710,9 +1710,17 @@ export class SwarmManager extends EventEmitter implements SwarmToolHost {
         descriptor,
         this.resolveSystemPromptForDescriptor(descriptor)
       );
-      this.runtimes.set(managerId, runtime);
 
-      descriptor.contextUsage = runtime.getContextUsage();
+      // Guard against concurrent runtime installation (e.g. handleUserMessage
+      // saw idle status during the await above and called getOrCreateRuntimeForDescriptor)
+      const concurrentRuntime = this.runtimes.get(managerId);
+      if (concurrentRuntime) {
+        await runtime.terminate({ abort: true });
+        descriptor.contextUsage = concurrentRuntime.getContextUsage();
+      } else {
+        this.runtimes.set(managerId, runtime);
+        descriptor.contextUsage = runtime.getContextUsage();
+      }
 
       // Do NOT emit conversation_reset — history is preserved
       this.emitStatus(managerId, descriptor.status, runtime.getPendingCount(), descriptor.contextUsage);

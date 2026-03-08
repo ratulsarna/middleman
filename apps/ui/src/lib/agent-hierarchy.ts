@@ -65,9 +65,12 @@ export function buildManagerTreeRows(agents: AgentDescriptor[]): {
 }
 
 export function chooseFallbackAgentId(agents: AgentDescriptor[], preferredAgentId?: string | null): string | null {
-  // If the preferred agent exists in the full list (even if terminated/stopped),
-  // preserve the selection — the user intentionally clicked on it.
-  if (preferredAgentId && agents.some((agent) => agent.agentId === preferredAgentId && isSidebarVisibleAgent(agent))) {
+  // Preserve selection if the preferred agent is actually visible in the sidebar tree.
+  // Managers: visible unless error. Workers: only visible when active.
+  if (preferredAgentId && agents.some((agent) =>
+    agent.agentId === preferredAgentId &&
+    (agent.role === 'manager' ? isSidebarVisibleAgent(agent) : isActiveAgent(agent))
+  )) {
     return preferredAgentId
   }
 

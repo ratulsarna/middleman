@@ -106,6 +106,18 @@ describe('agent-hierarchy', () => {
     expect(chooseFallbackAgentId([activeManager, errorManager], 'mgr-error')).toBe('mgr-active')
   })
 
+  it('does not preserve terminated/stopped workers as preferred (they are hidden from sidebar)', () => {
+    const activeManager = manager('mgr-active')
+    const terminatedWorker = { ...worker('w-dead', 'mgr-active'), status: 'terminated' as const }
+
+    // Terminated worker is not visible in sidebar tree — should fall back to active manager
+    expect(chooseFallbackAgentId([activeManager, terminatedWorker], 'w-dead')).toBe('mgr-active')
+
+    // Active worker is visible — should be preserved
+    const activeWorker = worker('w-live', 'mgr-active')
+    expect(chooseFallbackAgentId([activeManager, activeWorker], 'w-live')).toBe('w-live')
+  })
+
   it('includes terminated managers in sidebar rows', () => {
     const agents = [{ ...manager('mgr'), status: 'terminated' as const }]
     const { managerRows } = buildManagerTreeRows(agents)
